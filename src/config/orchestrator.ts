@@ -1,29 +1,10 @@
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
-import { homedir } from "node:os";
 import { join } from "node:path";
 import type { OrchestratorConfig, OrchestratorConfigFile, WorkerProfile } from "../types";
 import { builtInProfiles } from "./profiles";
+import { isPlainObject, asBooleanRecord, asStringArray, getUserConfigDir, deepMerge } from "../helpers/format";
 
-function isPlainObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function asBooleanRecord(value: unknown): Record<string, boolean> | undefined {
-  if (!isPlainObject(value)) return undefined;
-  const out: Record<string, boolean> = {};
-  for (const [k, v] of Object.entries(value)) {
-    if (typeof v !== "boolean") return undefined;
-    out[k] = v;
-  }
-  return out;
-}
-
-function asStringArray(value: unknown): string[] | undefined {
-  if (!Array.isArray(value)) return undefined;
-  if (value.every((v) => typeof v === "string")) return value;
-  return undefined;
-}
 
 function resolveWorkerEntry(entry: unknown): WorkerProfile | undefined {
   if (typeof entry === "string") return builtInProfiles[entry];
@@ -60,30 +41,12 @@ function resolveWorkerEntry(entry: unknown): WorkerProfile | undefined {
   return merged as unknown as WorkerProfile;
 }
 
-function deepMerge(base: Record<string, unknown>, override: Record<string, unknown>): Record<string, unknown> {
-  const out: Record<string, unknown> = { ...base };
-  for (const [k, v] of Object.entries(override)) {
-    if (Array.isArray(v)) {
-      out[k] = v;
-    } else if (isPlainObject(v) && isPlainObject(out[k])) {
-      out[k] = deepMerge(out[k] as Record<string, unknown>, v);
-    } else {
-      out[k] = v;
-    }
-  }
-  return out;
-}
-
-function getUserConfigDir(): string {
-  // Linux/macOS: respect XDG_CONFIG_HOME; Windows best-effort.
-  if (process.platform === "win32") {
-    return process.env.APPDATA || join(homedir(), "AppData", "Roaming");
-  }
-  return process.env.XDG_CONFIG_HOME || join(homedir(), ".config");
-}
-
 export function getDefaultGlobalOrchestratorConfigPath(): string {
   return join(getUserConfigDir(), "opencode", "orchestrator.json");
+}
+
+export function getDefaultGlobalOpenCodeConfigPath(): string {
+  return join(getUserConfigDir(), "opencode", "opencode.json");
 }
 
 export function getDefaultProjectOrchestratorConfigPath(directory: string): string {
@@ -128,6 +91,7 @@ function parseOrchestratorConfigFile(raw: unknown): Partial<OrchestratorConfigFi
     if (raw.ui.defaultListFormat === "markdown" || raw.ui.defaultListFormat === "json") {
       ui.defaultListFormat = raw.ui.defaultListFormat;
     }
+    if (typeof raw.ui.firstRunDemo === "boolean") ui.firstRunDemo = raw.ui.firstRunDemo;
     partial.ui = ui as OrchestratorConfig["ui"];
   }
 
@@ -148,6 +112,7 @@ function parseOrchestratorConfigFile(raw: unknown): Partial<OrchestratorConfigFi
     if (typeof raw.agent.prompt === "string") agent.prompt = raw.agent.prompt;
     if (raw.agent.mode === "primary" || raw.agent.mode === "subagent") agent.mode = raw.agent.mode;
     if (typeof raw.agent.color === "string") agent.color = raw.agent.color;
+    if (typeof raw.agent.applyToBuild === "boolean") agent.applyToBuild = raw.agent.applyToBuild;
     partial.agent = agent as OrchestratorConfig["agent"];
   }
 
@@ -172,6 +137,44 @@ function parseOrchestratorConfigFile(raw: unknown): Partial<OrchestratorConfigFi
   return partial;
 }
 
+function collectProfilesAndSpawn(input: OrchestratorConfigFile): {
+  profiles: Record<string, WorkerProfile>;
+  spawn: string[];
+} {
+  const profiles: Record<string, WorkerProfile> = { ...builtInProfiles };
+  const spawn: string[] = [];
+  const seen = new Set<string>();
+
+  const registerProfile = (entry: unknown): WorkerProfile | undefined => {
+    const resolved = resolveWorkerEntry(entry);
+    if (resolved) profiles[resolved.id] = resolved;
+    return resolved;
+  };
+
+  const enqueueSpawn = (id: string | undefined) => {
+    if (!id) return;
+    if (!(id in profiles)) return;
+    if (seen.has(id)) return;
+    seen.add(id);
+    spawn.push(id);
+  };
+
+  for (const entry of input.profiles ?? []) {
+    registerProfile(entry);
+  }
+
+  for (const entry of input.workers ?? []) {
+    if (typeof entry === "string") {
+      enqueueSpawn(entry);
+      continue;
+    }
+    const resolved = registerProfile(entry);
+    enqueueSpawn(resolved?.id);
+  }
+
+  return { profiles, spawn };
+}
+
 export type LoadedOrchestratorConfig = {
   config: OrchestratorConfig;
   sources: { global?: string; project?: string };
@@ -191,6 +194,7 @@ export async function loadOrchestratorConfig(input: {
       injectSystemContext: true,
       systemContextMaxWorkers: 12,
       defaultListFormat: "markdown",
+      firstRunDemo: true,
     },
     notifications: {
       idle: { enabled: false, title: "OpenCode", message: "Session is idle", delayMs: 1500 },
@@ -199,6 +203,7 @@ export async function loadOrchestratorConfig(input: {
       enabled: true,
       name: "orchestrator",
       mode: "primary",
+      applyToBuild: false,
     },
     commands: { enabled: true, prefix: "orchestrator." },
     pruning: {
@@ -249,23 +254,7 @@ export async function loadOrchestratorConfig(input: {
     projectPartial as unknown as Record<string, unknown>
   ) as unknown as OrchestratorConfigFile;
 
-  const profiles: Record<string, WorkerProfile> = { ...builtInProfiles };
-
-  for (const entry of mergedFile.profiles ?? []) {
-    const p = resolveWorkerEntry(entry);
-    if (p) profiles[p.id] = p;
-  }
-  // Back-compat: allow inline profile definitions in `workers`
-  for (const entry of mergedFile.workers ?? []) {
-    if (typeof entry === "string") continue;
-    const p = resolveWorkerEntry(entry);
-    if (p) profiles[p.id] = p;
-  }
-
-  const spawn = (mergedFile.workers ?? [])
-    .map((entry) => (typeof entry === "string" ? entry : (resolveWorkerEntry(entry)?.id ?? "")))
-    .filter((id) => typeof id === "string" && id.length > 0);
-  const spawnUnique = [...new Set(spawn)].filter((id) => id in profiles);
+  const { profiles, spawn } = collectProfilesAndSpawn(mergedFile);
 
   const config: OrchestratorConfig = {
     basePort: mergedFile.basePort ?? defaultsFile.basePort ?? 14096,
@@ -278,7 +267,7 @@ export async function loadOrchestratorConfig(input: {
     commands: (mergedFile.commands ?? defaultsFile.commands) as OrchestratorConfig["commands"],
     pruning: (mergedFile.pruning ?? defaultsFile.pruning) as OrchestratorConfig["pruning"],
     profiles,
-    spawn: spawnUnique,
+    spawn,
   };
 
   return { config, sources };

@@ -4,6 +4,7 @@
   "type": "object",
   "additionalProperties": false,
   "properties": {
+    "$schema": { "type": "string" },
     "basePort": { "type": "number", "default": 14096 },
     "autoSpawn": { "type": "boolean", "default": true },
     "startupTimeout": { "type": "number", "default": 30000 },

@@ -37,15 +37,34 @@ export interface WorkerInstance {
   profile: WorkerProfile;
   status: WorkerStatus;
   port: number;
+  /** PID of the spawned `opencode serve` process (when spawned by orchestrator) */
+  pid?: number;
+  /** Base URL of the worker server */
+  serverUrl?: string;
   /** Directory context for tool execution (query.directory) */
   directory?: string;
   sessionId?: string;
   client?: ReturnType<typeof import("@opencode-ai/sdk").createOpencodeClient>;
   /** If this worker was spawned in-process, this shuts down its server */
-  shutdown?: () => void;
+  shutdown?: () => void | Promise<void>;
   startedAt: Date;
   lastActivity?: Date;
   error?: string;
+  warning?: string;
+  currentTask?: string;
+  /** Most recent completed output (for UI) */
+  lastResult?: {
+    at: Date;
+    jobId?: string;
+    response: string;
+    report?: {
+      summary?: string;
+      details?: string;
+      issues?: string[];
+      notes?: string;
+    };
+    durationMs?: number;
+  };
 }
 
 export interface Registry {
@@ -78,6 +97,12 @@ export interface OrchestratorConfig {
     systemContextMaxWorkers?: number;
     /** Default tool output format */
     defaultListFormat?: "markdown" | "json";
+    /**
+     * First-run demo behavior (no config file detected):
+     * - true: auto-run `orchestrator.demo` once per machine/user
+     * - false: only show a toast tip
+     */
+    firstRunDemo?: boolean;
   };
   /** Optional idle notifications */
   notifications?: {
@@ -96,6 +121,8 @@ export interface OrchestratorConfig {
     prompt?: string;
     mode?: "primary" | "subagent";
     color?: string;
+    /** If true, also override the built-in `build` agent model */
+    applyToBuild?: boolean;
   };
   /** Inject command shortcuts into OpenCode config */
   commands?: {

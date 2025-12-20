@@ -3,6 +3,8 @@ import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { loadOrchestratorConfig } from "../src/config/orchestrator";
+import { resolveModelRef } from "../src/models/catalog";
+import { hydrateProfileModelsFromOpencode } from "../src/models/hydrate";
 import { buildPromptParts, extractTextFromPromptResponse } from "../src/workers/prompt";
 
 describe("config loader", () => {
@@ -61,5 +63,207 @@ describe("prompt helpers", () => {
     const out = extractTextFromPromptResponse({});
     expect(out.text).toBe("");
     expect(out.debug).toBe("no_parts");
+  });
+});
+
+describe("model resolver", () => {
+  test("resolveModelRef respects explicit provider even when other providers have matching models", () => {
+    const providers: any[] = [
+      {
+        id: "local-proxy",
+        source: "config",
+        models: {
+          "local-proxy:claude-opus-4-5-20251101": { name: "Claude Opus 4.5" },
+          "local-proxy:claude-opus-4-5-thinking": { name: "Claude Opus 4.5 Thinking" },
+          "local-proxy:claude-sonnet-4-5-20250929": { name: "Claude Sonnet 4.5" },
+        },
+      },
+      {
+        id: "anthropic",
+        source: "api",
+        models: {
+          "claude-opus-4-5": { name: "Claude Opus 4.5" },
+        },
+      },
+    ];
+
+    // When explicitly specifying "anthropic/...", should use anthropic, not local-proxy
+    const res = resolveModelRef("anthropic/claude-opus-4-5", providers as any);
+    expect("error" in res).toBe(false);
+    if ("error" in res) return;
+    expect(res.full).toBe("anthropic/claude-opus-4-5");
+    expect(res.providerID).toBe("anthropic");
+  });
+
+  test("resolveModelRef fuzzy-matches to configured provider when no explicit provider given", () => {
+    const providers: any[] = [
+      {
+        id: "local-proxy",
+        source: "config",
+        models: {
+          "local-proxy:claude-opus-4-5-20251101": { name: "Claude Opus 4.5" },
+        },
+      },
+    ];
+
+    // When NOT specifying a provider, fuzzy matching should find local-proxy
+    const res = resolveModelRef("claude-opus-4-5", providers as any);
+    expect("error" in res).toBe(false);
+    if ("error" in res) return;
+    expect(res.full).toBe("local-proxy/local-proxy:claude-opus-4-5-20251101");
+  });
+});
+
+describe("model nodes", () => {
+  test("node:vision picks a vision-capable model from usable providers", async () => {
+    const providers: any[] = [
+      {
+        id: "local-proxy",
+        source: "config",
+        models: {
+          "local-proxy:text-only": { capabilities: { attachment: false, input: { image: false } } },
+          "local-proxy:vision-1": { capabilities: { attachment: true, input: { image: true } } },
+        },
+      },
+      {
+        id: "anthropic",
+        source: "api",
+        models: {
+          "claude-vision-in-api": { capabilities: { attachment: true, input: { image: true } } },
+        },
+      },
+    ];
+
+    const client: any = {
+      config: {
+        get: async () => ({ data: { model: "opencode/gpt-5-nano" } }),
+        providers: async () => ({ data: { providers, default: {} } }),
+      },
+    };
+
+    const out = await hydrateProfileModelsFromOpencode({
+      client,
+      directory: process.cwd(),
+      profiles: {
+        vision: {
+          id: "vision",
+          name: "Vision",
+          model: "node:vision",
+          purpose: "p",
+          whenToUse: "w",
+          supportsVision: true,
+        },
+      },
+    });
+
+    expect(out.profiles.vision.model).toBe("local-proxy/local-proxy:vision-1");
+  });
+
+  test("node:vision allows opencode provider even if source is api", async () => {
+    const providers: any[] = [
+      {
+        id: "opencode",
+        source: "api",
+        models: {
+          "gpt-5-vision": { capabilities: { attachment: true, input: { image: true } } },
+        },
+      },
+    ];
+
+    const client: any = {
+      config: {
+        get: async () => ({ data: { model: "opencode/gpt-5-nano" } }),
+        providers: async () => ({ data: { providers, default: {} } }),
+      },
+    };
+
+    const out = await hydrateProfileModelsFromOpencode({
+      client,
+      directory: process.cwd(),
+      profiles: {
+        vision: {
+          id: "vision",
+          name: "Vision",
+          model: "node:vision",
+          purpose: "p",
+          whenToUse: "w",
+          supportsVision: true,
+        },
+      },
+    });
+
+    expect(out.profiles.vision.model).toBe("opencode/gpt-5-vision");
+  });
+
+  test("node:vision fails when no vision-capable models are available", async () => {
+    const providers: any[] = [
+      {
+        id: "local-proxy",
+        source: "config",
+        models: {
+          "local-proxy:text-only": { capabilities: { attachment: false, input: { image: false } } },
+        },
+      },
+    ];
+
+    const client: any = {
+      config: {
+        get: async () => ({ data: { model: "opencode/gpt-5-nano" } }),
+        providers: async () => ({ data: { providers, default: {} } }),
+      },
+    };
+
+    await expect(
+      hydrateProfileModelsFromOpencode({
+        client,
+        directory: process.cwd(),
+        profiles: {
+          vision: {
+            id: "vision",
+            name: "Vision",
+            model: "node:vision",
+            purpose: "p",
+            whenToUse: "w",
+            supportsVision: true,
+          },
+        },
+      })
+    ).rejects.toThrow(/No vision-capable models/i);
+  });
+
+  test("vision-capable profiles reject explicit text-only models", async () => {
+    const providers: any[] = [
+      {
+        id: "local-proxy",
+        source: "config",
+        models: {
+          "local-proxy:text-only": { capabilities: { attachment: false, input: { image: false } } },
+        },
+      },
+    ];
+
+    const client: any = {
+      config: {
+        get: async () => ({ data: { model: "opencode/gpt-5-nano" } }),
+        providers: async () => ({ data: { providers, default: {} } }),
+      },
+    };
+
+    await expect(
+      hydrateProfileModelsFromOpencode({
+        client,
+        directory: process.cwd(),
+        profiles: {
+          vision: {
+            id: "vision",
+            name: "Vision",
+            model: "local-proxy/local-proxy:text-only",
+            purpose: "p",
+            whenToUse: "w",
+            supportsVision: true,
+          },
+        },
+      })
+    ).rejects.toThrow(/requires vision/i);
   });
 });

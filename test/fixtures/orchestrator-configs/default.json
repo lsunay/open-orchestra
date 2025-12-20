@@ -1,0 +1,37 @@
+{
+  "$schema": "../../../schema/orchestrator.schema.json",
+  "basePort": 18000,
+  "autoSpawn": false,
+  "startupTimeout": 30000,
+  "healthCheckInterval": 10000,
+  "ui": {
+    "toasts": false,
+    "injectSystemContext": true,
+    "systemContextMaxWorkers": 5,
+    "defaultListFormat": "markdown",
+    "firstRunDemo": false
+  },
+  "notifications": {
+    "idle": {
+      "enabled": false
+    }
+  },
+  "agent": {
+    "enabled": false
+  },
+  "commands": {
+    "enabled": true,
+    "prefix": "orchestrator."
+  },
+  "pruning": {
+    "enabled": true,
+    "maxToolOutputChars": 5000,
+    "maxToolInputChars": 2000,
+    "protectedTools": ["read_file", "list_files"]
+  },
+  "profiles": [
+    "coder",
+    "researcher"
+  ],
+  "workers": []
+}

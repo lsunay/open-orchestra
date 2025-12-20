@@ -56,7 +56,36 @@ export function flattenProviders(providers: Provider[]): ModelCatalogEntry[] {
 
 export function filterProviders(providers: Provider[], scope: "configured" | "all"): Provider[] {
   if (scope === "all") return providers;
-  return providers.filter((p) => p.id === "opencode" || p.source !== "api");
+  
+  // Filter to only providers that are usable (have credentials or are explicitly configured).
+  // 
+  // The SDK's Provider.source field tells us how the provider was registered:
+  //   - "config": Explicitly configured in opencode.json
+  //   - "custom": Custom provider (npm package, explicitly configured)
+  //   - "env": Auto-detected from environment variables (e.g., ANTHROPIC_API_KEY)
+  //   - "api": From SDK's built-in API catalog (may or may not have credentials)
+  //
+  // For "configured" scope, we include:
+  //   - "config" and "custom" sources (explicitly configured)
+  //   - "env" sources (have environment-based credentials)
+  //   - "api" sources that have a `key` set (connected via /connect)
+  // The "opencode" provider is special and always available.
+  return providers.filter((p) => {
+    if (p.id === "opencode") return true;
+    
+    // Include explicitly configured providers
+    if (p.source === "config" || p.source === "custom") return true;
+    
+    // Include environment-detected providers (they have API keys set)
+    if (p.source === "env") return true;
+    
+    // For API catalog providers, check if they have credentials set.
+    // The SDK's Provider type has an optional `key` field that's populated when
+    // credentials are available (set via /connect command which stores in auth.json).
+    if (p.source === "api" && p.key) return true;
+    
+    return false;
+  });
 }
 
 export function resolveModelRef(
@@ -66,20 +95,116 @@ export function resolveModelRef(
   const raw = input.trim();
   if (!raw) return { error: "Model is required." };
 
+  const normalize = (s: string): string => s.trim().toLowerCase();
+  const stripProviderPrefix = (modelID: string): string => {
+    const idx = modelID.indexOf(":");
+    return idx >= 0 ? modelID.slice(idx + 1) : modelID;
+  };
+  const stripVersionSuffix = (modelID: string): string => {
+    // Common patterns: -20251101, -2025-11-01, -v2, etc. Keep it conservative.
+    return modelID
+      .replace(/-\d{8}$/i, "")
+      .replace(/-\d{4}-\d{2}-\d{2}$/i, "")
+      .replace(/-v\d+$/i, "");
+  };
+  const matchCandidate = (needleRaw: string, candidateRaw: string, candidateName?: string): boolean => {
+    const needle = normalize(stripVersionSuffix(stripProviderPrefix(needleRaw)));
+    const cand = normalize(stripVersionSuffix(stripProviderPrefix(candidateRaw)));
+    if (!needle) return false;
+
+    if (cand === needle) return true;
+    if (cand.startsWith(`${needle}-`)) return true;
+    if (cand.includes(needle)) return true;
+    if (candidateName) {
+      const n = normalize(candidateName);
+      if (n.includes(needle)) return true;
+    }
+    return false;
+  };
+  type Match = { providerID: string; modelID: string; score: number };
+  const scoreMatch = (needleRaw: string, provider: Provider, candidateRaw: string, candidateName?: string): number | undefined => {
+    if (!matchCandidate(needleRaw, candidateRaw, candidateName)) return undefined;
+
+    const needle = normalize(stripVersionSuffix(stripProviderPrefix(needleRaw)));
+    const cand = normalize(stripVersionSuffix(stripProviderPrefix(candidateRaw)));
+    let score = 0;
+
+    // Prefer configured providers over API ones when possible.
+    if (provider.source !== "api") score += 5;
+
+    // Prefer closer matches.
+    if (cand === needle) score += 50;
+    else if (cand.startsWith(`${needle}-`)) score += 25;
+    else if (cand.includes(needle)) score += 10;
+
+    // Prefer non-thinking variants when multiple Claude-style matches exist.
+    if (/\bthinking\b/i.test(candidateRaw) || /\bthinking\b/i.test(candidateName ?? "")) score -= 10;
+    if (/\breasoning\b/i.test(candidateRaw) || /\breasoning\b/i.test(candidateName ?? "")) score -= 5;
+
+    return score;
+  };
+  const pickBest = (matches: Match[]): { providerID: string; modelID: string } | undefined => {
+    if (matches.length === 0) return undefined;
+    const sorted = [...matches].sort((a, b) => b.score - a.score);
+    const best = sorted[0];
+    const second = sorted[1];
+    if (second && second.score === best.score) return undefined;
+    return { providerID: best.providerID, modelID: best.modelID };
+  };
+  const suggest = (matches: Array<{ providerID: string; modelID: string }>) =>
+    matches.map((m) => fullModelID(m.providerID, m.modelID)).slice(0, 20);
+
   if (isFullModelID(raw)) {
     const parsed = parseFullModelID(raw);
     const provider = providers.find((p) => p.id === parsed.providerID);
-    if (!provider) {
-      return { error: `Unknown provider "${parsed.providerID}".`, suggestions: providers.map((p) => p.id).slice(0, 20) };
+
+    // Exact match within provider - respect explicit provider specification.
+    // When user explicitly specifies "anthropic/model", use anthropic even if it's an "api" provider.
+    if (provider && parsed.modelID in (provider.models ?? {})) {
+      return { full: raw, providerID: parsed.providerID, modelID: parsed.modelID };
     }
-    if (!(parsed.modelID in (provider.models ?? {}))) {
-      const suggestions = Object.keys(provider.models ?? {}).slice(0, 20).map((m) => fullModelID(provider.id, m));
+
+    // Fuzzy match: prefer same provider if it exists; otherwise search across all providers.
+    const pool = provider ? [provider] : providers;
+    const matches: Match[] = [];
+    for (const p of pool) {
+      for (const [modelID, model] of Object.entries(p.models ?? {})) {
+        const score = scoreMatch(parsed.modelID, p, modelID, (model as any)?.name);
+        if (typeof score === "number") matches.push({ providerID: p.id, modelID, score });
+      }
+    }
+    const best = pickBest(matches);
+    if (best) {
+      return { full: fullModelID(best.providerID, best.modelID), providerID: best.providerID, modelID: best.modelID };
+    }
+    if (matches.length > 1) {
       return {
-        error: `Model "${parsed.modelID}" not found for provider "${provider.id}".`,
-        suggestions,
+        error: `Model "${parsed.modelID}" matches multiple configured models. Use an exact provider/model ID.`,
+        suggestions: suggest(matches),
       };
     }
-    return { full: raw, providerID: parsed.providerID, modelID: parsed.modelID };
+
+    // If provider is missing or doesn't contain the model, provide helpful suggestions.
+    if (!provider) {
+      // Try searching all providers for fuzzy matches to give suggestions.
+      const all: Array<{ providerID: string; modelID: string }> = [];
+      for (const p of providers) {
+        for (const [modelID, model] of Object.entries(p.models ?? {})) {
+          if (matchCandidate(parsed.modelID, modelID, (model as any)?.name)) all.push({ providerID: p.id, modelID });
+        }
+      }
+      return {
+        error: `Unknown provider "${parsed.providerID}".`,
+        suggestions: all.length ? suggest(all) : providers.map((p) => p.id).slice(0, 20),
+      };
+    }
+
+    // Provider exists but model doesn't.
+    const exactSuggestions = Object.keys(provider.models ?? {}).slice(0, 20).map((m) => fullModelID(provider.id, m));
+    return {
+      error: `Model "${parsed.modelID}" not found for provider "${provider.id}".`,
+      suggestions: exactSuggestions,
+    };
   }
 
   const matches: Array<{ providerID: string; modelID: string }> = [];
@@ -94,9 +219,38 @@ export function resolveModelRef(
     return { full: fullModelID(match.providerID, match.modelID), providerID: match.providerID, modelID: match.modelID };
   }
   if (matches.length > 1) {
+    const configured = matches.filter((m) => providers.find((p) => p.id === m.providerID)?.source !== "api");
+    if (configured.length === 1) {
+      const match = configured[0];
+      return { full: fullModelID(match.providerID, match.modelID), providerID: match.providerID, modelID: match.modelID };
+    }
     return {
       error: `Model "${raw}" exists in multiple providers. Use provider/model format.`,
       suggestions: matches.map((m) => fullModelID(m.providerID, m.modelID)).slice(0, 20),
+    };
+  }
+
+  // Fuzzy match (by substring / version stripping) across all providers.
+  const fuzzy: Match[] = [];
+  for (const provider of providers) {
+    for (const [modelID, model] of Object.entries(provider.models ?? {})) {
+      const score = scoreMatch(raw, provider, modelID, (model as any)?.name);
+      if (typeof score === "number") fuzzy.push({ providerID: provider.id, modelID, score });
+    }
+  }
+  const bestFuzzy = pickBest(fuzzy);
+  if (bestFuzzy) {
+    return { full: fullModelID(bestFuzzy.providerID, bestFuzzy.modelID), providerID: bestFuzzy.providerID, modelID: bestFuzzy.modelID };
+  }
+  if (fuzzy.length > 1) {
+    const configured = fuzzy.filter((m) => providers.find((p) => p.id === m.providerID)?.source !== "api");
+    if (configured.length === 1) {
+      const m = configured[0];
+      return { full: fullModelID(m.providerID, m.modelID), providerID: m.providerID, modelID: m.modelID };
+    }
+    return {
+      error: `Model "${raw}" matches multiple configured models. Use provider/model format.`,
+      suggestions: suggest(fuzzy),
     };
   }
 
@@ -158,4 +312,3 @@ export async function fetchProviders(client: any, directory: string): Promise<{ 
   const res = await client.config.providers({ query: { directory } });
   return { providers: (res.data as any)?.providers ?? [], defaults: (res.data as any)?.default ?? {} };
 }
-

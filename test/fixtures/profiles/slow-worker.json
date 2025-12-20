@@ -1,0 +1,12 @@
+{
+  "id": "slow-worker",
+  "name": "Slow Worker",
+  "model": "test-model-slow",
+  "purpose": "Worker that simulates slow responses for timeout and performance testing",
+  "whenToUse": "Use this worker to test timeout handling and performance degradation scenarios",
+  "systemPrompt": "You are a slow worker. Take your time to respond thoroughly. Simulate latency in your responses.",
+  "supportsVision": false,
+  "supportsWeb": false,
+  "temperature": 0.7,
+  "tags": ["test", "slow", "performance", "timeout"]
+}

@@ -12,7 +12,7 @@ export const builtInProfiles: Record<string, WorkerProfile> = {
   vision: {
     id: "vision",
     name: "Vision Analyst",
-    model: "auto:vision", // resolved from user's configured OpenCode models
+    model: "node:vision", // resolved from user's available OpenCode models
     purpose: "Analyze images, screenshots, diagrams, and visual content",
     whenToUse:
       "When you need to understand visual content like screenshots, architecture diagrams, UI mockups, error screenshots, or any image-based information",
@@ -31,11 +31,15 @@ Be precise and detailed in your descriptions. Focus on what's relevant to the qu
   docs: {
     id: "docs",
     name: "Documentation Librarian",
-    model: "auto:docs",
+    model: "node:docs",
     purpose: "Research documentation, find examples, explain APIs and libraries",
     whenToUse:
       "When you need to look up official documentation, find code examples, understand library APIs, or research best practices",
     supportsWeb: true,
+    tools: {
+      write: false,
+      edit: false,
+    },
     systemPrompt: `You are a documentation and research specialist. Your job is to:
 - Find and cite official documentation
 - Locate working code examples
@@ -50,7 +54,7 @@ Always cite your sources. Prefer official documentation over blog posts.`,
   coder: {
     id: "coder",
     name: "Code Implementer",
-    model: "auto",
+    model: "node",
     purpose: "Write, edit, and refactor code with full tool access",
     whenToUse:
       "When you need to actually write or modify code, create files, run commands, or implement features",
@@ -68,7 +72,7 @@ You have full access to the codebase. Be thorough but efficient.`,
   architect: {
     id: "architect",
     name: "System Architect",
-    model: "auto",
+    model: "node",
     purpose: "Design systems, plan implementations, review architecture decisions",
     whenToUse:
       "When you need to plan a complex feature, design system architecture, or make high-level technical decisions",
@@ -91,7 +95,7 @@ Focus on the big picture. Don't implement - plan and advise.`,
   explorer: {
     id: "explorer",
     name: "Code Explorer",
-    model: "auto:fast",
+    model: "node:fast",
     purpose: "Quickly search and navigate the codebase",
     whenToUse:
       "When you need to quickly find files, search for patterns, or locate specific code without deep analysis",
@@ -113,7 +117,7 @@ Be fast and focused. Return relevant information quickly.`,
   memory: {
     id: "memory",
     name: "Memory Graph Curator",
-    model: "auto",
+    model: "node",
     purpose: "Maintain a Neo4j-backed memory graph (project + global) and advise on context pruning",
     whenToUse:
       "When you want to record durable project knowledge, track decisions and entities over time, or decide what context can be safely pruned",

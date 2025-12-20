@@ -49,12 +49,11 @@
 
 - **6 Built-in Worker Profiles** - Vision, Docs, Coder, Architect, Explorer, Memory
 - **Hub-and-Spoke Architecture** - Central orchestrator with specialized workers
-- **Neo4j-Backed Memory System** - Persistent knowledge graph for project/global context
+- **8 Essential Tool APIs** - Focused tooling for worker management and delegation
 - **Profile-Based Spawning** - Auto-model resolution from OpenCode config
-- **22+ Tool APIs** - Comprehensive tooling for worker management and delegation
-- **DCP-Inspired Context Pruning** - Automatic context management for long sessions
 - **Dynamic Port Allocation** - Avoids conflicts with automatic port assignment
 - **Session-Based Isolation** - Each worker maintains its own conversation context
+- **Optional Neo4j Memory** - Persistent knowledge graph (advanced feature)
 
 ## Architecture
 
@@ -65,7 +64,7 @@ graph TB
     subgraph Orchestrator["Open Orchestra Hub"]
         Registry["Worker Registry"]
         Config["Config Loader"]
-        Tools["22+ Tool APIs"]
+        Tools["8 Tool APIs"]
     end
     
     subgraph Workers["Specialized Workers"]
@@ -135,15 +134,6 @@ bun add -g opencode-orchestrator
 }
 ```
 
-**3. Auto-configure models:**
-
-Run inside OpenCode:
-```
-orchestrator.setup
-```
-
-This auto-populates profile models from your current OpenCode model configuration.
-
 ### Basic Usage
 
 ```mermaid
@@ -205,80 +195,37 @@ stateDiagram-v2
 
 ## Documentation
 
-- [Architecture Deep Dive](./docs/architecture.md) - System design and patterns
-- [API Reference](./docs/api-reference.md) - Complete tool documentation
-- [Configuration Guide](./docs/configuration.md) - Profiles and settings
-- [Examples](./docs/examples.md) - Common workflows and use cases
-- [Memory System](./docs/memory.md) - Neo4j-backed knowledge management
+- [Guide](./docs/guide.md) - Configuration, profiles, and examples
+- [Tool Reference](./docs/reference.md) - Tool index and descriptions
+- [Architecture](./docs/architecture.md) - System design and patterns
 - [CHANGELOG](./CHANGELOG.md) - Version history and changes
 
-## Tool Categories
+## Tools (8 total)
 
-### Worker Management
-- `spawn_worker` - Start a new worker
-- `stop_worker` - Stop a running worker
-- `ensure_workers` - Ensure workers are running
-- `list_workers` - List active workers
-- `get_worker_info` - Detailed worker info
+| Tool | Description |
+|------|-------------|
+| `spawn_worker` | Start a worker with a profile |
+| `ask_worker` | Send a message to a specific worker |
+| `delegate_task` | Auto-route task to the best worker |
+| `list_workers` | List running workers (use `workerId` for details) |
+| `stop_worker` | Stop a running worker |
+| `list_profiles` | Show available worker profiles |
+| `list_models` | Show available models from OpenCode config |
+| `orchestrator_status` | Show orchestrator config and status |
 
-### Task Delegation
-- `delegate_task` - Auto-route to best worker
-- `ask_worker` - Direct worker messaging
-- `find_worker` - Find suitable worker
+### Commands
 
-### Configuration
-- `list_models` - Available OpenCode models
-- `list_profiles` - Available worker profiles
-- `set_profile_model` - Map profile to model
-- `set_autospawn` - Configure auto-spawn
-- `autofill_profile_models` - Auto-configure models
-- `orchestrator_config` - Show effective config
+| Command | Description |
+|---------|-------------|
+| `orchestrator.status` | Show workers, profiles, and config |
+| `orchestrator.models` | List available models |
+| `orchestrator.profiles` | List worker profiles |
+| `orchestrator.workers` | List running workers |
+| `orchestrator.spawn.<id>` | Spawn a worker (e.g. spawn.docs) |
 
-### Memory (Neo4j)
-- `memory_put` - Store memory entry
-- `memory_link` - Create relationships
-- `memory_search` - Search memory graph
-- `memory_recent` - Recent entries
+## Advanced: Memory System (Optional)
 
-## Memory System
-
-Open Orchestra includes a Neo4j-backed memory system for persistent knowledge storage:
-
-```mermaid
-graph LR
-    subgraph Project Memory
-        A["architecture:db"]
-        B["decision:use-postgres"]
-        C["pattern:repository"]
-    end
-    
-    subgraph Global Memory
-        D["preference:testing-style"]
-        E["tool:favorite-linter"]
-    end
-    
-    A -->|RELATES_TO| B
-    B -->|RELATES_TO| C
-    
-    style A fill:#6495ED
-    style B fill:#6495ED
-    style C fill:#6495ED
-    style D fill:#FFD700
-    style E fill:#FFD700
-```
-
-**Setup:**
-```bash
-export OPENCODE_NEO4J_URI=bolt://localhost:7687
-export OPENCODE_NEO4J_USERNAME=neo4j
-export OPENCODE_NEO4J_PASSWORD=your-password
-```
-
-**Usage:**
-```bash
-memory_put({ key: "architecture:db", value: "Using PostgreSQL with Drizzle ORM", tags: ["database"] })
-memory_search({ query: "database" })
-```
+Open Orchestra includes an optional Neo4j-backed memory system for persistent knowledge storage. See the memory section in [Guide](./docs/guide.md) for setup instructions.
 
 ## Development
 
@@ -314,7 +261,7 @@ opencode-orchestrator/
 │   │   ├── catalog.ts        # Model catalog utilities
 │   │   └── hydrate.ts        # Model resolution
 │   ├── tools/
-│   │   └── index.ts          # 22+ tool implementations
+│   │   └── index.ts          # 8 tool implementations
 │   ├── types/
 │   │   └── index.ts          # TypeScript definitions
 │   ├── ux/
@@ -325,16 +272,10 @@ opencode-orchestrator/
 │       └── spawner.ts        # Worker lifecycle
 ├── schema/
 │   └── orchestrator.schema.json
-├── examples/
-│   ├── orchestrator.json
-│   ├── orchestrator-custom.json
-│   └── opencode-with-orchestrator.json
 ├── docs/
 │   ├── architecture.md
-│   ├── api-reference.md
-│   ├── configuration.md
-│   ├── examples.md
-│   └── memory.md
+│   ├── guide.md
+│   └── reference.md
 └── test/
     ├── e2e.test.ts
     └── orchestrator.test.ts

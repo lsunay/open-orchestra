@@ -1,5 +1,14 @@
 import type { WorkerProfile } from "../types";
-import { fetchOpencodeConfig, fetchProviders, filterProviders, flattenProviders, pickDocsModel, pickFastModel, pickVisionModel, resolveModelRef } from "./catalog";
+import {
+  fetchOpencodeConfig,
+  fetchProviders,
+  flattenProviders,
+  parseFullModelID,
+  pickDocsModel,
+  pickFastModel,
+  pickVisionModel,
+  resolveModelRef,
+} from "./catalog";
 
 export type ProfileModelHydrationChange = {
   profileId: string;
@@ -23,21 +32,24 @@ export async function hydrateProfileModelsFromOpencode(input: {
   ]);
 
   const providersAll = providersRes.providers;
-  const providersConfigured = filterProviders(providersAll, "configured");
-  const catalog = flattenProviders(providersConfigured);
+  const providersUsable = providersAll.filter((p) => p.id === "opencode" || p.source !== "api");
+  const catalog = flattenProviders(providersUsable);
 
-  const fallbackModel =
+  const fallbackCandidate =
     cfg?.model ||
     (providersRes.defaults?.opencode ? `opencode/${providersRes.defaults.opencode}` : undefined) ||
     "opencode/gpt-5-nano";
+
+  const resolvedFallback = resolveModelRef(fallbackCandidate, providersAll);
+  const fallbackModel = "error" in resolvedFallback ? fallbackCandidate : resolvedFallback.full;
 
   const changes: ProfileModelHydrationChange[] = [];
 
   const resolveAuto = (profile: WorkerProfile): { model: string; reason: string } => {
     const tag = profile.model;
-    const isVision = profile.supportsVision || /auto:vision/i.test(tag);
-    const isDocs = /auto:docs/i.test(tag);
-    const isFast = /auto:fast/i.test(tag);
+    const isVision = profile.supportsVision || /(?:auto|node):vision/i.test(tag);
+    const isDocs = /(?:auto|node):docs/i.test(tag);
+    const isFast = /(?:auto|node):fast/i.test(tag);
 
     const picked = isVision
       ? pickVisionModel(catalog)
@@ -50,6 +62,15 @@ export async function hydrateProfileModelsFromOpencode(input: {
     if (picked) {
       return { model: picked.full, reason: `auto-selected from configured models (${tag})` };
     }
+
+    // Vision workers should never silently downgrade to a text-only model.
+    if (isVision) {
+      throw new Error(
+        `No vision-capable models found for "${profile.id}" (model tag: "${tag}"). ` +
+          `Configure a vision model in OpenCode or set the profile model explicitly.`
+      );
+    }
+
     return { model: fallbackModel, reason: `fallback to default model (${tag})` };
   };
 
@@ -58,22 +79,39 @@ export async function hydrateProfileModelsFromOpencode(input: {
     let desired = profile.model;
     let reason = "";
 
-    if (profile.model.startsWith("auto")) {
+    const modelSpec = profile.model.trim();
+    const isNodeTag = modelSpec.startsWith("auto") || modelSpec.startsWith("node");
+
+    if (isNodeTag) {
       const resolved = resolveAuto(profile);
       desired = resolved.model;
       reason = resolved.reason;
     } else {
       const resolved = resolveModelRef(profile.model, providersAll);
       if ("error" in resolved) {
-        desired = fallbackModel;
-        reason = `invalid model, using fallback (${resolved.error})`;
+        const suffix = resolved.suggestions?.length ? `\nSuggestions:\n- ${resolved.suggestions.join("\n- ")}` : "";
+        throw new Error(`Invalid model for profile "${profile.id}": ${resolved.error}${suffix}`);
       } else {
         desired = resolved.full;
       }
     }
 
-    // If the model isn't in the configured catalog, we still keep it (it may be an env provider).
-    // But if it is auto, or invalid, we already resolved to something safe.
+    if (profile.supportsVision) {
+      const parsed = parseFullModelID(desired);
+      const provider = providersAll.find((p) => p.id === parsed.providerID);
+      const model = (provider?.models ?? {})[parsed.modelID] as any;
+      const caps = model?.capabilities as any | undefined;
+      if (caps) {
+        const visionCapable = Boolean(caps?.attachment || caps?.input?.image);
+        if (!visionCapable) {
+          throw new Error(
+            `Profile "${profile.id}" requires vision, but selected model "${desired}" does not appear vision-capable. ` +
+              `Choose a model with image input support.`
+          );
+        }
+      }
+    }
+
     next[id] = { ...profile, model: desired };
 
     if (desired !== profile.model) {

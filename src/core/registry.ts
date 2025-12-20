@@ -142,8 +142,22 @@ export class WorkerRegistry implements Registry {
       whenToUse: w.profile.whenToUse,
       status: w.status,
       port: w.port,
+      pid: w.pid,
+      serverUrl: w.serverUrl,
       supportsVision: w.profile.supportsVision ?? false,
       supportsWeb: w.profile.supportsWeb ?? false,
+      lastActivity: w.lastActivity?.toISOString(),
+      currentTask: w.currentTask,
+      warning: w.warning,
+      lastResult: w.lastResult
+        ? {
+            at: w.lastResult.at.toISOString(),
+            jobId: w.lastResult.jobId,
+            durationMs: w.lastResult.durationMs,
+            response: w.lastResult.response,
+            report: w.lastResult.report,
+          }
+        : undefined,
     }));
   }
 

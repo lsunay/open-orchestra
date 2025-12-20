@@ -2,10 +2,17 @@
  * Worker Spawner - Creates and manages OpenCode worker instances
  */
 
-import { createOpencode, createOpencodeClient } from "@opencode-ai/sdk";
+import { createOpencodeClient } from "@opencode-ai/sdk";
 import type { WorkerProfile, WorkerInstance } from "../types";
 import { registry } from "../core/registry";
+import { hydrateProfileModelsFromOpencode } from "../models/hydrate";
 import { buildPromptParts, extractTextFromPromptResponse, type WorkerAttachment } from "./prompt";
+import { spawn, type ChildProcess } from "node:child_process";
+import { existsSync } from "node:fs";
+import { pathToFileURL } from "node:url";
+import { ensureRuntime, registerWorkerInDeviceRegistry } from "../core/runtime";
+import { listDeviceRegistry, removeWorkerEntriesByPid, type DeviceRegistryWorkerEntry } from "../core/device-registry";
+import { withWorkerProfileLock } from "../core/profile-lock";
 
 interface SpawnOptions {
   /** Base port to start from */
@@ -14,7 +21,11 @@ interface SpawnOptions {
   timeout: number;
   /** Directory to run in */
   directory: string;
+  /** Orchestrator client used to resolve model nodes (auto/node tags) */
+  client?: any;
 }
+
+const inFlightSpawns = new Map<string, Promise<WorkerInstance>>();
 
 function isValidPort(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= 65535;
@@ -26,74 +37,393 @@ function parseProviderId(model: string): { providerId?: string; modelKey?: strin
   return {};
 }
 
+function resolveWorkerBridgePluginSpecifier(): string | undefined {
+  const candidates = [
+    // When running from `dist/workers/spawner.js`
+    new URL("../../src/worker-bridge-plugin.mjs", import.meta.url),
+    // When running from `src/workers/spawner.ts`
+    new URL("../worker-bridge-plugin.mjs", import.meta.url),
+  ];
+  for (const url of candidates) {
+    try {
+      const path = url.pathname;
+      if (existsSync(path)) return pathToFileURL(path).href;
+    } catch {
+      // ignore
+    }
+  }
+  return undefined;
+}
+
+function isProcessAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /**
- * Spawn a new worker instance
+ * Find an existing worker from the device registry that matches the profile
+ * and is still alive.
+ */
+async function findExistingWorker(
+  profileId: string
+): Promise<DeviceRegistryWorkerEntry | undefined> {
+  const entries = await listDeviceRegistry();
+  const candidates = entries.filter(
+    (e): e is DeviceRegistryWorkerEntry =>
+      e.kind === "worker" &&
+      e.workerId === profileId &&
+      (e.status === "ready" || e.status === "busy") &&
+      isProcessAlive(e.pid)
+  );
+  // Prefer the most recently updated entry
+  candidates.sort((a, b) => b.updatedAt - a.updatedAt);
+  return candidates[0];
+}
+
+/**
+ * Try to reconnect to an existing worker process instead of spawning a new one.
+ * Returns undefined if reconnection fails or no suitable worker exists.
+ */
+async function tryReuseExistingWorker(
+  profile: WorkerProfile,
+  directory: string
+): Promise<WorkerInstance | undefined> {
+  const existing = await findExistingWorker(profile.id);
+  if (!existing || !existing.url) return undefined;
+
+  try {
+    const client = createOpencodeClient({ baseUrl: existing.url });
+
+    // Verify the worker is still responsive and get existing sessions
+    const sessionsResult = await Promise.race([
+      client.session.list({ query: { directory } } as any),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error("Health check timeout")), 3000)
+      ),
+    ]);
+
+    if (!sessionsResult.data) return undefined;
+
+    const sessions = sessionsResult.data as Array<{ id: string }>;
+
+    // Determine which session to use:
+    // 1. Prefer the session stored in registry (continuity)
+    // 2. Fall back to first existing session
+    // 3. Create new session only if none exist
+    let sessionId: string | undefined;
+
+    if (existing.sessionId && sessions.some((s) => s.id === existing.sessionId)) {
+      // Stored session still exists, reuse it
+      sessionId = existing.sessionId;
+    } else if (sessions.length > 0) {
+      // Use first available session
+      sessionId = sessions[0].id;
+    } else {
+      // No sessions exist, create a new one
+      const newSession = await client.session.create({
+        body: { title: `Worker: ${profile.name}` },
+        query: { directory },
+      });
+      if (!newSession.data) return undefined;
+      sessionId = newSession.data.id;
+    }
+
+    const instance: WorkerInstance = {
+      profile,
+      status: existing.status === "busy" ? "busy" : "ready",
+      port: existing.port ?? 0,
+      serverUrl: existing.url,
+      directory,
+      startedAt: new Date(existing.startedAt),
+      lastActivity: new Date(),
+      client,
+      pid: existing.pid,
+      sessionId,
+    };
+
+    // Register in the in-memory registry
+    registry.register(instance);
+
+    // Update device registry with current session
+    await registerWorkerInDeviceRegistry({
+      workerId: profile.id,
+      pid: existing.pid,
+      url: existing.url,
+      port: existing.port,
+      sessionId,
+      status: instance.status,
+      startedAt: existing.startedAt,
+    }).catch(() => {});
+
+    console.log(`[Orchestrator] Reusing existing worker "${profile.id}" (pid: ${existing.pid}, session: ${sessionId})`);
+    return instance;
+  } catch {
+    // Worker is dead or unresponsive, clean up the stale entry
+    await removeWorkerEntriesByPid(existing.pid).catch(() => {});
+    return undefined;
+  }
+}
+
+async function spawnOpencodeServe(options: {
+  hostname: string;
+  port: number;
+  timeout: number;
+  config: Record<string, unknown>;
+  env: Record<string, string | undefined>;
+}): Promise<{ url: string; proc: ChildProcess; close: () => Promise<void> }> {
+  // CRITICAL: Mark this as a worker process to prevent recursive spawning.
+  // Workers should NOT load the orchestrator plugin or spawn more workers.
+  const workerEnv = {
+    ...process.env,
+    ...options.env,
+    OPENCODE_CONFIG_CONTENT: JSON.stringify(options.config ?? {}),
+    OPENCODE_ORCHESTRATOR_WORKER: "1", // Signal that this is a worker, not the orchestrator
+  };
+
+  const proc = spawn(
+    "opencode",
+    ["serve", `--hostname=${options.hostname}`, `--port=${options.port}`],
+    {
+      env: workerEnv as any,
+      stdio: ["ignore", "pipe", "pipe"],
+    }
+  );
+
+  const url = await new Promise<string>((resolve, reject) => {
+    const id = setTimeout(() => reject(new Error(`Timeout waiting for server to start after ${options.timeout}ms`)), options.timeout);
+    let output = "";
+
+    const onData = (chunk: Buffer) => {
+      output += chunk.toString();
+      const lines = output.split("\n");
+      for (const line of lines) {
+        if (line.startsWith("opencode server listening")) {
+          const match = line.match(/on\s+(https?:\/\/[^\s]+)/);
+          if (!match) continue;
+          clearTimeout(id);
+          cleanup();
+          resolve(match[1]);
+          return;
+        }
+      }
+    };
+
+    const onExit = (code: number | null) => {
+      clearTimeout(id);
+      cleanup();
+      let msg = `Server exited with code ${code}`;
+      if (output.trim()) msg += `\nServer output: ${output}`;
+      reject(new Error(msg));
+    };
+
+    const onError = (err: Error) => {
+      clearTimeout(id);
+      cleanup();
+      reject(err);
+    };
+
+    const cleanup = () => {
+      proc.stdout.off("data", onData);
+      proc.stderr.off("data", onData);
+      proc.off("exit", onExit);
+      proc.off("error", onError);
+    };
+
+    proc.stdout.on("data", onData);
+    proc.stderr.on("data", onData);
+    proc.on("exit", onExit);
+    proc.on("error", onError);
+  });
+
+  const close = async () => {
+    if (proc.killed) return;
+    proc.kill("SIGTERM");
+    await new Promise<void>((resolve) => {
+      const timer = setTimeout(() => {
+        try {
+          proc.kill("SIGKILL");
+        } catch {
+          // ignore
+        }
+        resolve();
+      }, 2000);
+      proc.once("exit", () => {
+        clearTimeout(timer);
+        resolve();
+      });
+    });
+  };
+
+  return { url, proc, close };
+}
+
+/**
+ * Spawn a new worker instance, or reuse an existing one if available.
  */
 export async function spawnWorker(
   profile: WorkerProfile,
-  options: SpawnOptions
+  options: SpawnOptions & { forceNew?: boolean }
 ): Promise<WorkerInstance> {
-  if (!profile.model.includes("/") && !profile.model.startsWith("auto")) {
-    throw new Error(
-      `Invalid model "${profile.model}". OpenCode models must be in "provider/model" format. ` +
-        `Run list_models({}) to see configured models and copy the full ID.`
-    );
+  const spawnTs = Date.now();
+  console.log(`[DEBUG:spawner] spawnWorker called for "${profile.id}" at ${spawnTs}, pid=${process.pid}`);
+  
+  // First, check if we already have this worker in our in-memory registry
+  const existingInRegistry = registry.getWorker(profile.id);
+  if (existingInRegistry && existingInRegistry.status !== "error" && existingInRegistry.status !== "stopped") {
+    console.log(`[Orchestrator] Worker "${profile.id}" already in registry, reusing`);
+    console.log(`[DEBUG:spawner] Reusing existing worker "${profile.id}" status=${existingInRegistry.status}`);
+    return existingInRegistry;
   }
 
-  const hostname = "127.0.0.1";
-  const fixedPort = isValidPort(profile.port) ? profile.port : undefined;
-  // Use port 0 to let OpenCode choose a free port dynamically.
-  const requestedPort = fixedPort ?? 0;
+  // De-dupe concurrent spawn requests in-process (per worker profile).
+  // This enforces a hard "1 opencode session per profile" rule.
+  const inFlight = inFlightSpawns.get(profile.id);
+  console.log(`[DEBUG:spawner] inFlightSpawns check for "${profile.id}": exists=${!!inFlight}, mapSize=${inFlightSpawns.size}, mapKeys=[${[...inFlightSpawns.keys()].join(',')}]`);
+  if (inFlight) {
+    console.log(`[DEBUG:spawner] Returning existing in-flight spawn for "${profile.id}"`);
+    return inFlight;
+  }
 
-  // Create initial instance
-  const instance: WorkerInstance = {
-    profile,
-    status: "starting",
-    port: requestedPort,
-    directory: options.directory,
-    startedAt: new Date(),
-  };
+  const spawnPromise = (async () => {
+    // Try to reuse an existing worker from device registry (cross-session reuse)
+    const reused = await tryReuseExistingWorker(profile, options.directory);
+    if (reused) return reused;
 
-  // Register immediately so TUI can show it
-  registry.register(instance);
+    return await withWorkerProfileLock(
+      profile.id,
+      // Lock should cover the entire "reuse-or-spawn" flow to enforce "1 opencode session per profile" across processes.
+      { timeoutMs: Math.max(15_000, options.timeout + 15_000) },
+      async () => {
+        // After waiting on the lock, re-check reuse. Another orchestrator may have spawned it.
+        const reusedAfterLock = await tryReuseExistingWorker(profile, options.directory);
+        if (reusedAfterLock) return reusedAfterLock;
 
-  try {
-    // Start the opencode server for this worker (port=0 => dynamic port)
-    const { client, server } = await createOpencode({
-      hostname,
-      port: requestedPort,
-      timeout: options.timeout,
-      config: {
-        model: profile.model,
-        // Apply any tool restrictions
-        ...(profile.tools && { tools: profile.tools }),
-      },
-    });
+        const resolvedProfile = await (async (): Promise<WorkerProfile> => {
+          const modelSpec = profile.model.trim();
+          const isNodeTag = modelSpec.startsWith("auto") || modelSpec.startsWith("node");
 
-    instance.client = client;
-    instance.shutdown = () => server.close();
+          // When spawning from inside the plugin, we always pass the orchestrator client.
+          // Without it, we can only accept fully-qualified provider/model IDs.
+          if (!options.client) {
+            if (isNodeTag) {
+              throw new Error(
+                `Profile "${profile.id}" uses "${profile.model}", but model resolution is unavailable. ` +
+                  `Set a concrete provider/model ID for this profile.`
+              );
+            }
+            if (!modelSpec.includes("/")) {
+              throw new Error(
+                `Invalid model "${profile.model}". OpenCode models must be in "provider/model" format. ` +
+                  `Run list_models({}) to see configured models and copy the full ID.`
+              );
+            }
+            return profile;
+          }
+
+          const { profiles } = await hydrateProfileModelsFromOpencode({
+            client: options.client,
+            directory: options.directory,
+            profiles: { [profile.id]: profile },
+          });
+          return profiles[profile.id] ?? profile;
+        })();
+
+        const hostname = "127.0.0.1";
+        const fixedPort = isValidPort(resolvedProfile.port) ? resolvedProfile.port : undefined;
+        // Use port 0 to let OpenCode choose a free port dynamically.
+        const requestedPort = fixedPort ?? 0;
+
+        // Create initial instance
+        const instance: WorkerInstance = {
+          profile: resolvedProfile,
+          status: "starting",
+          port: requestedPort,
+          directory: options.directory,
+          startedAt: new Date(),
+        };
+
+        // Register immediately so TUI can show it
+        registry.register(instance);
+
+        try {
+          const rt = await ensureRuntime();
+          const pluginSpecifier = resolveWorkerBridgePluginSpecifier();
+
+          // Start the opencode server for this worker (port=0 => dynamic port)
+          const { url, proc, close } = await spawnOpencodeServe({
+            hostname,
+            port: requestedPort,
+            timeout: options.timeout,
+            config: {
+              model: resolvedProfile.model,
+              plugin: pluginSpecifier ? [pluginSpecifier] : [],
+              // Apply any tool restrictions
+              ...(resolvedProfile.tools && { tools: resolvedProfile.tools }),
+            },
+            env: {
+              OPENCODE_ORCH_BRIDGE_URL: rt.bridge.url,
+              OPENCODE_ORCH_BRIDGE_TOKEN: rt.bridge.token,
+              OPENCODE_ORCH_INSTANCE_ID: rt.instanceId,
+              OPENCODE_ORCH_WORKER_ID: resolvedProfile.id,
+            },
+          });
+
+          const client = createOpencodeClient({ baseUrl: url });
+
+          instance.client = client;
+          instance.shutdown = close;
+          instance.pid = proc.pid ?? undefined;
+          instance.serverUrl = url;
+
+          // Record the process early so other orchestrator instances can reuse rather than spawn.
+          if (typeof instance.pid === "number") {
+            await registerWorkerInDeviceRegistry({
+              workerId: resolvedProfile.id,
+              pid: instance.pid,
+              url,
+              port: instance.port,
+              sessionId: instance.sessionId,
+              status: "starting",
+              startedAt: instance.startedAt.getTime(),
+            });
+          }
 
     // Preflight provider availability to avoid "ready but never responds" workers.
-    const { providerId, modelKey } = parseProviderId(profile.model);
+    const { providerId, modelKey } = parseProviderId(resolvedProfile.model);
     if (providerId) {
       const providersRes = await client.config.providers({ query: { directory: options.directory } });
       const providers = (providersRes.data as any)?.providers as Array<{ id: string; models?: Record<string, unknown> }> | undefined;
-      const provider = providers?.find((p) => p.id === providerId);
+      const provider = providers?.find((p) => p.id === providerId) as any;
       if (!provider) {
         throw new Error(
-          `Provider "${providerId}" is not configured for this worker (model: "${profile.model}"). ` +
+          `Provider "${providerId}" is not configured for this worker (model: "${resolvedProfile.model}"). ` +
             `Update your OpenCode config/providers or override the profile model.`
         );
       }
+      // If the provider is "api" sourced, it's often present but missing credentials.
+      // We can't validate auth here, but we can warn early so users aren't surprised.
+      if (provider?.source === "api" && providerId !== "opencode") {
+        instance.warning =
+          `Provider "${providerId}" looks unconfigured (api provider). ` +
+          `If the worker doesn't respond, add credentials to your OpenCode config or set the profile to a configured provider/model.`;
+      }
       if (modelKey && provider.models && typeof provider.models === "object") {
         const modelMap = provider.models as Record<string, unknown>;
-        const candidates = new Set([profile.model, modelKey, `${providerId}/${modelKey}`, `${providerId}:${modelKey}`]);
+        const candidates = new Set([
+          resolvedProfile.model,
+          modelKey,
+          `${providerId}/${modelKey}`,
+          `${providerId}:${modelKey}`,
+        ]);
         const found = [...candidates].some((k) => k in modelMap);
         if (!found) {
-          console.warn(
-            `[Orchestrator] Model "${profile.model}" not found in provider "${providerId}" models. ` +
-              `Worker may not respond until configured.`
-          );
+          instance.warning =
+            `Model "${resolvedProfile.model}" not found in provider "${providerId}" models. ` +
+            `Worker may not respond until configured.`;
         }
       }
     }
@@ -101,11 +431,11 @@ export async function spawnWorker(
     // If we used a dynamic port, update the instance.port to the actual one.
     if (!fixedPort) {
       try {
-        const url = new URL(server.url);
-        const actualPort = Number(url.port);
+        const u = new URL(url);
+        const actualPort = Number(u.port);
         if (Number.isFinite(actualPort) && actualPort > 0) {
           instance.port = actualPort;
-          registry.updateStatus(profile.id, "starting");
+          registry.updateStatus(resolvedProfile.id, "starting");
         }
       } catch {
         // ignore
@@ -115,7 +445,7 @@ export async function spawnWorker(
     // Create a dedicated session for this worker
     const sessionResult = await client.session.create({
       body: {
-        title: `Worker: ${profile.name}`,
+        title: `Worker: ${resolvedProfile.name}`,
       },
       query: { directory: options.directory },
     });
@@ -129,43 +459,104 @@ export async function spawnWorker(
 
     instance.sessionId = session.id;
 
-    // Inject the system context if provided
-    if (profile.systemPrompt) {
-      await client.session.prompt({
+    if (typeof instance.pid === "number") {
+      await registerWorkerInDeviceRegistry({
+        workerId: resolvedProfile.id,
+        pid: instance.pid,
+        url,
+        port: instance.port,
+        sessionId: instance.sessionId,
+        status: "starting",
+        startedAt: instance.startedAt.getTime(),
+      });
+    }
+
+    // Inject system context + reporting/messaging instructions.
+    await client.session
+      .prompt({
         path: { id: session.id },
         body: {
           noReply: true,
           parts: [
             {
               type: "text",
-              text: `<system-context>\n${profile.systemPrompt}\n</system-context>`,
+              text:
+                (resolvedProfile.systemPrompt
+                  ? `<system-context>\n${resolvedProfile.systemPrompt}\n</system-context>\n\n`
+                  : "") +
+                `<orchestrator-instructions>\n` +
+                `At the END of every task/turn, call the tool \`message_tool\` with kind="report".\n` +
+                `Include:\n` +
+                `- summary (1-3 bullets)\n` +
+                `- details (what you did, what you changed, commands run)\n` +
+                `- issues (any problems/uncertainties)\n` +
+                `The tool call should contain the full final report text in the \`text\` field.\n` +
+                `If you need to communicate with another worker, call \`message_tool\` with kind="message" and a \`to\` worker id.\n` +
+                `</orchestrator-instructions>`,
             },
           ],
         },
         query: { directory: options.directory },
-      });
+      } as any)
+      .catch(() => {});
+
+        // Mark as ready
+        instance.status = "ready";
+        instance.lastActivity = new Date();
+        registry.updateStatus(resolvedProfile.id, "ready");
+        if (typeof instance.pid === "number") {
+          await registerWorkerInDeviceRegistry({
+            workerId: resolvedProfile.id,
+            pid: instance.pid,
+            url,
+            port: instance.port,
+            sessionId: instance.sessionId,
+            status: "ready",
+            startedAt: instance.startedAt.getTime(),
+          });
+        }
+
+          return instance;
+        } catch (error) {
+          const errorMsg = error instanceof Error ? error.message : String(error);
+          try {
+            await instance.shutdown?.();
+          } catch {
+            // ignore
+          }
+          instance.status = "error";
+          instance.error = errorMsg;
+          registry.updateStatus(resolvedProfile.id, "error", errorMsg);
+          if (typeof instance.pid === "number") {
+            await registerWorkerInDeviceRegistry({
+              workerId: resolvedProfile.id,
+              pid: instance.pid,
+              url: instance.serverUrl,
+              port: instance.port,
+              sessionId: instance.sessionId,
+              status: "error",
+              startedAt: instance.startedAt.getTime(),
+              lastError: errorMsg,
+            });
+          }
+          console.error(`[Orchestrator] Failed to spawn worker "${resolvedProfile.name}":`, errorMsg);
+          throw error;
+        }
+      }
+    );
+  })();
+
+  console.log(`[DEBUG:spawner] Setting inFlightSpawns for "${profile.id}" BEFORE async work, mapSize will be=${inFlightSpawns.size + 1}`);
+  inFlightSpawns.set(profile.id, spawnPromise);
+  try {
+    const result = await spawnPromise;
+    console.log(`[DEBUG:spawner] spawnWorker completed for "${profile.id}", status=${result.status}, pid=${result.pid}`);
+    return result;
+  } finally {
+    if (inFlightSpawns.get(profile.id) === spawnPromise) {
+      console.log(`[DEBUG:spawner] Removing inFlightSpawns for "${profile.id}"`);
+      inFlightSpawns.delete(profile.id);
     }
-
-    // Mark as ready
-    instance.status = "ready";
-    instance.lastActivity = new Date();
-    registry.updateStatus(profile.id, "ready");
-
-    console.log(`[Orchestrator] Worker "${profile.name}" ready on ${server.url}`);
-
-    return instance;
-  } catch (error) {
-    const errorMsg = error instanceof Error ? error.message : String(error);
-    try {
-      instance.shutdown?.();
-    } catch {
-      // ignore
-    }
-    instance.status = "error";
-    instance.error = errorMsg;
-    registry.updateStatus(profile.id, "error", errorMsg);
-    console.error(`[Orchestrator] Failed to spawn worker "${profile.name}":`, errorMsg);
-    throw error;
   }
 }
 
@@ -180,6 +571,7 @@ export async function connectToWorker(
     profile,
     status: "starting",
     port,
+    serverUrl: `http://127.0.0.1:${port}`,
     directory: process.cwd(),
     startedAt: new Date(),
   };
@@ -188,11 +580,11 @@ export async function connectToWorker(
 
   try {
     const client = createOpencodeClient({
-      baseUrl: `http://127.0.0.1:${port}`,
+      baseUrl: instance.serverUrl,
     });
 
     // Verify connection - SDK returns { data, error }
-    const sessionsResult = await client.session.list();
+    const sessionsResult = await client.session.list({ query: { directory: instance.directory } } as any);
     const sessions = sessionsResult.data;
 
     instance.client = client;
@@ -205,6 +597,7 @@ export async function connectToWorker(
     } else {
       const sessionResult = await client.session.create({
         body: { title: `Worker: ${profile.name}` },
+        query: { directory: instance.directory },
       });
       const session = sessionResult.data;
       if (!session) {
@@ -235,10 +628,22 @@ export async function stopWorker(workerId: string): Promise<boolean> {
 
   try {
     // The SDK doesn't expose a direct shutdown, but we can mark it stopped
-    instance.shutdown?.();
+    await instance.shutdown?.();
     instance.status = "stopped";
     registry.updateStatus(workerId, "stopped");
     registry.unregister(workerId);
+    if (typeof instance.pid === "number") {
+      await registerWorkerInDeviceRegistry({
+        workerId,
+        pid: instance.pid,
+        url: instance.serverUrl,
+        port: instance.port,
+        sessionId: instance.sessionId,
+        status: "stopped",
+        startedAt: instance.startedAt.getTime(),
+      });
+      await removeWorkerEntriesByPid(instance.pid).catch(() => {});
+    }
     return true;
   } catch (error) {
     console.error(`[Orchestrator] Error stopping worker "${workerId}":`, error);
@@ -255,6 +660,7 @@ export async function sendToWorker(
   options?: {
     attachments?: WorkerAttachment[];
     timeout?: number;
+    jobId?: string;
   }
 ): Promise<{ success: boolean; response?: string; error?: string }> {
   const instance = registry.getWorker(workerId);
@@ -273,12 +679,18 @@ export async function sendToWorker(
 
   // Mark as busy
   registry.updateStatus(workerId, "busy");
+  instance.currentTask = message.slice(0, 140);
 
   try {
-    const parts = await buildPromptParts({ message, attachments: options?.attachments });
+    const startedAt = Date.now();
+    const taskText =
+      options?.jobId
+        ? `${message}\n\n<orchestrator-job id="${options.jobId}">Include this jobId when calling message_tool kind=\"report\".</orchestrator-job>`
+        : message;
+    const parts = await buildPromptParts({ message: taskText, attachments: options?.attachments });
 
     const abort = new AbortController();
-    const timeoutMs = options?.timeout ?? 120_000;
+    const timeoutMs = options?.timeout ?? 600_000;
     const timer = setTimeout(() => abort.abort(new Error("worker prompt timed out")), timeoutMs);
 
     // Send prompt and wait for response - SDK returns { data, error }
@@ -293,8 +705,25 @@ export async function sendToWorker(
       } as any)
       .finally(() => clearTimeout(timer));
 
+    const sdkError: any = (result as any)?.error;
+    if (sdkError) {
+      const msg =
+        sdkError?.data?.message ??
+        sdkError?.message ??
+        (typeof sdkError === "string" ? sdkError : JSON.stringify(sdkError));
+      instance.warning = `Last request failed: ${msg}`;
+      throw new Error(msg);
+    }
+
     const extracted = extractTextFromPromptResponse(result.data);
-    const responseText = extracted.text.trim();
+    let responseText = extracted.text.trim();
+    if (responseText.length === 0) {
+      // Fallback: some providers emit only reasoning parts.
+      const data: any = result.data as any;
+      const parts = Array.isArray(data?.parts) ? data.parts : [];
+      const reasoning = parts.filter((p: any) => p?.type === "reasoning" && typeof p.text === "string").map((p: any) => p.text).join("\n");
+      responseText = reasoning.trim();
+    }
     if (responseText.length === 0) {
       throw new Error(
         `Worker returned no text output (${extracted.debug ?? "unknown"}). ` +
@@ -305,39 +734,117 @@ export async function sendToWorker(
     // Mark as ready again
     registry.updateStatus(workerId, "ready");
     instance.lastActivity = new Date();
+    instance.currentTask = undefined;
+    instance.warning = undefined;
+    const durationMs = Date.now() - startedAt;
+    instance.lastResult = {
+      at: new Date(),
+      jobId: options?.jobId ?? instance.lastResult?.jobId,
+      response: responseText,
+      report: instance.lastResult?.report,
+      durationMs,
+    };
+    if (typeof instance.pid === "number") {
+      await registerWorkerInDeviceRegistry({
+        workerId,
+        pid: instance.pid,
+        url: instance.serverUrl,
+        port: instance.port,
+        sessionId: instance.sessionId,
+        status: "ready",
+        startedAt: instance.startedAt.getTime(),
+      });
+    }
 
     return { success: true, response: responseText };
   } catch (error) {
     const errorMsg = error instanceof Error ? error.message : String(error);
     registry.updateStatus(workerId, "ready"); // Reset to ready so it can be used again
+    instance.currentTask = undefined;
+    instance.warning = instance.warning ?? `Last request failed: ${errorMsg}`;
     return { success: false, error: errorMsg };
   }
 }
 
 /**
- * Spawn multiple workers in parallel
+ * Spawn multiple workers sequentially by default (to avoid overwhelming system resources).
+ * Each worker spawns its own MCP servers, so parallel spawning can be very expensive.
  */
 export async function spawnWorkers(
   profiles: WorkerProfile[],
-  options: SpawnOptions
+  options: SpawnOptions & { sequential?: boolean }
 ): Promise<{ succeeded: WorkerInstance[]; failed: Array<{ profile: WorkerProfile; error: string }> }> {
-  const results = await Promise.allSettled(
-    profiles.map((profile) => spawnWorker(profile, options))
-  );
-
   const succeeded: WorkerInstance[] = [];
   const failed: Array<{ profile: WorkerProfile; error: string }> = [];
 
-  results.forEach((result, index) => {
-    if (result.status === "fulfilled") {
-      succeeded.push(result.value);
-    } else {
-      failed.push({
-        profile: profiles[index],
-        error: result.reason?.message || String(result.reason),
-      });
+  // Default to sequential spawning to avoid resource contention
+  const sequential = options.sequential !== false;
+
+  if (sequential) {
+    // Spawn one at a time to avoid resource contention
+    for (const profile of profiles) {
+      try {
+        const instance = await spawnWorker(profile, options);
+        succeeded.push(instance);
+        console.log(`[Orchestrator] Worker "${profile.id}" spawned (${succeeded.length}/${profiles.length})`);
+      } catch (err) {
+        failed.push({
+          profile,
+          error: err instanceof Error ? err.message : String(err),
+        });
+        console.error(`[Orchestrator] Worker "${profile.id}" failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
     }
-  });
+  } else {
+    // Parallel spawning (use with caution)
+    const results = await Promise.allSettled(
+      profiles.map((profile) => spawnWorker(profile, options))
+    );
+
+    results.forEach((result, index) => {
+      if (result.status === "fulfilled") {
+        succeeded.push(result.value);
+      } else {
+        failed.push({
+          profile: profiles[index],
+          error: result.reason?.message || String(result.reason),
+        });
+      }
+    });
+  }
 
   return { succeeded, failed };
+}
+
+/**
+ * List all reusable workers from the device registry (alive processes not yet in our registry).
+ */
+export async function listReusableWorkers(): Promise<DeviceRegistryWorkerEntry[]> {
+  const entries = await listDeviceRegistry();
+  const inRegistry = new Set([...registry.workers.keys()]);
+
+  return entries.filter(
+    (e): e is DeviceRegistryWorkerEntry =>
+      e.kind === "worker" &&
+      !inRegistry.has(e.workerId) &&
+      (e.status === "ready" || e.status === "busy") &&
+      isProcessAlive(e.pid)
+  );
+}
+
+/**
+ * Clean up all dead worker entries from the device registry.
+ */
+export async function cleanupDeadWorkers(): Promise<number> {
+  const entries = await listDeviceRegistry();
+  let cleaned = 0;
+
+  for (const e of entries) {
+    if (e.kind === "worker" && !isProcessAlive(e.pid)) {
+      await removeWorkerEntriesByPid(e.pid).catch(() => {});
+      cleaned++;
+    }
+  }
+
+  return cleaned;
 }
