@@ -226,6 +226,8 @@ export const orchestratorConfig = tool({
           ui: config.ui,
           agent: config.agent,
           commands: config.commands,
+          workflows: config.workflows,
+          security: config.security,
           profiles: Object.values(effectiveProfiles).map((p) => ({ id: p.id, name: p.name, model: p.model })),
         },
         null,
@@ -243,6 +245,7 @@ export const orchestratorConfig = tool({
       `- spawn: ${config.spawn.length ? config.spawn.join(", ") : "(none)"}`,
       `- basePort: ${config.basePort}`,
       `- startupTimeout: ${config.startupTimeout}ms`,
+      `- workflows: ${config.workflows?.enabled === false ? "disabled" : "enabled"}`,
       "",
       "## Profiles (worker → model)",
       renderMarkdownTable(["ID", "Name", "Model", "Vision", "Web"], profileRows),
@@ -377,7 +380,7 @@ export const resetProfileModels = tool({
       `- file: ${path}`,
       `- profiles reset: ${[...ids].sort().join(", ")}`,
       "",
-      "Tip: run `orchestrator.setup` to save the last-used model into profiles again.",
+      "Tip: run `autofill_profile_models({ scope: 'global' })` to pin the last-used model again.",
     ].join("\n");
   },
 });

@@ -67,6 +67,7 @@ Minimal config (auto-spawn a few built-ins):
   "autoSpawn": true,
   "startupTimeout": 30000,
   "healthCheckInterval": 30000,
+  "workflows": { "enabled": true },
   "workers": ["vision", "docs", "coder"]
 }
 ```
@@ -119,6 +120,50 @@ OpenCode config with an orchestrator agent:
   }
 }
 ```
+
+## Workflows
+
+Built-in workflows are available for multi-step runs:
+
+- `list_workflows` - list registered workflows
+- `run_workflow` - run a workflow by id
+- `orchestrator.workflows` - command shortcut for listing workflows
+- `orchestrator.boomerang` - command shortcut for the RooCode boomerang workflow
+
+Example:
+
+```bash
+run_workflow({ workflowId: "roocode-boomerang", task: "Add workflow tools and docs" })
+```
+
+Security limits live in config:
+
+```json
+{
+  "workflows": {
+    "enabled": true,
+    "roocodeBoomerang": { "maxSteps": 4 }
+  },
+  "security": {
+    "workflows": { "maxSteps": 4, "maxTaskChars": 12000, "maxCarryChars": 24000, "perStepTimeoutMs": 120000 }
+  }
+}
+```
+
+## Debug logging
+
+To enable debug logs:
+
+- Set `ui.debug` in `orchestrator.json`, or
+- Export `OPENCODE_ORCH_DEBUG=1`
+
+Recent logs are buffered and visible via `orchestrator.diagnostics`.
+
+## Troubleshooting
+
+- Worker won't respond: verify provider credentials in `opencode.json` and set a concrete model via `set_profile_model`.
+- Model selection feels wrong: run `list_models`, then pin profiles to explicit `provider/model` IDs.
+- Need internal logs: enable `ui.debug` or `OPENCODE_ORCH_DEBUG=1`, then check `orchestrator.diagnostics`.
 
 ## Memory (optional)
 

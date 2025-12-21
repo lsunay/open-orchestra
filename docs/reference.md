@@ -25,6 +25,8 @@ Orchestrator visibility:
 - `orchestrator_messages` - Inter-agent inbox
 - `orchestrator_device_registry` - Device registry status
 - `orchestrator_diagnostics` - Process and memory diagnostics
+- `list_workflows` - List registered workflows
+- `run_workflow` - Run a workflow by id
 
 ## UX tools
 
@@ -36,6 +38,8 @@ Orchestrator visibility:
 - `enable_docs_passthrough` - Send user messages to docs worker
 - `worker_trace` - Trace recent worker activity
 - `orchestrator_keybinds_macos` - Fix macOS keybind defaults
+- `orchestrator.workflows` - Command shortcut for listing workflows
+- `orchestrator.boomerang` - Command shortcut for the RooCode boomerang workflow
 
 ## Config tools
 

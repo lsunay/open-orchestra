@@ -13,6 +13,7 @@ import { pathToFileURL } from "node:url";
 import { ensureRuntime, registerWorkerInDeviceRegistry } from "../core/runtime";
 import { listDeviceRegistry, removeWorkerEntriesByPid, type DeviceRegistryWorkerEntry } from "../core/device-registry";
 import { withWorkerProfileLock } from "../core/profile-lock";
+import { logger } from "../core/logger";
 
 interface SpawnOptions {
   /** Base port to start from */
@@ -143,6 +144,7 @@ async function tryReuseExistingWorker(
       client,
       pid: existing.pid,
       sessionId,
+      modelResolution: "reused existing worker",
     };
 
     // Register in the in-memory registry
@@ -159,7 +161,7 @@ async function tryReuseExistingWorker(
       startedAt: existing.startedAt,
     }).catch(() => {});
 
-    console.log(`[Orchestrator] Reusing existing worker "${profile.id}" (pid: ${existing.pid}, session: ${sessionId})`);
+    logger.info(`[Orchestrator] Reusing existing worker "${profile.id}" (pid: ${existing.pid}, session: ${sessionId})`);
     return instance;
   } catch {
     // Worker is dead or unresponsive, clean up the stale entry
@@ -269,22 +271,26 @@ export async function spawnWorker(
   options: SpawnOptions & { forceNew?: boolean }
 ): Promise<WorkerInstance> {
   const spawnTs = Date.now();
-  console.log(`[DEBUG:spawner] spawnWorker called for "${profile.id}" at ${spawnTs}, pid=${process.pid}`);
+  logger.debug(`[spawner] spawnWorker called for "${profile.id}" at ${spawnTs}, pid=${process.pid}`);
   
   // First, check if we already have this worker in our in-memory registry
   const existingInRegistry = registry.getWorker(profile.id);
   if (existingInRegistry && existingInRegistry.status !== "error" && existingInRegistry.status !== "stopped") {
-    console.log(`[Orchestrator] Worker "${profile.id}" already in registry, reusing`);
-    console.log(`[DEBUG:spawner] Reusing existing worker "${profile.id}" status=${existingInRegistry.status}`);
+    logger.info(`[Orchestrator] Worker "${profile.id}" already in registry, reusing`);
+    logger.debug(`[spawner] Reusing existing worker "${profile.id}" status=${existingInRegistry.status}`);
     return existingInRegistry;
   }
 
   // De-dupe concurrent spawn requests in-process (per worker profile).
   // This enforces a hard "1 opencode session per profile" rule.
   const inFlight = inFlightSpawns.get(profile.id);
-  console.log(`[DEBUG:spawner] inFlightSpawns check for "${profile.id}": exists=${!!inFlight}, mapSize=${inFlightSpawns.size}, mapKeys=[${[...inFlightSpawns.keys()].join(',')}]`);
+  logger.debug(
+    `[spawner] inFlightSpawns check for "${profile.id}": exists=${!!inFlight}, mapSize=${inFlightSpawns.size}, mapKeys=[${[
+      ...inFlightSpawns.keys(),
+    ].join(",")}]`
+  );
   if (inFlight) {
-    console.log(`[DEBUG:spawner] Returning existing in-flight spawn for "${profile.id}"`);
+    logger.debug(`[spawner] Returning existing in-flight spawn for "${profile.id}"`);
     return inFlight;
   }
 
@@ -337,6 +343,13 @@ export async function spawnWorker(
         // Use port 0 to let OpenCode choose a free port dynamically.
         const requestedPort = fixedPort ?? 0;
 
+        const modelResolution =
+          profile.model.trim().startsWith("auto") || profile.model.trim().startsWith("node")
+            ? `resolved from ${profile.model.trim()}`
+            : resolvedProfile.model === profile.model
+              ? "configured"
+              : `resolved from ${profile.model.trim()}`;
+
         // Create initial instance
         const instance: WorkerInstance = {
           profile: resolvedProfile,
@@ -344,6 +357,7 @@ export async function spawnWorker(
           port: requestedPort,
           directory: options.directory,
           startedAt: new Date(),
+          modelResolution,
         };
 
         // Register immediately so TUI can show it
@@ -539,22 +553,24 @@ export async function spawnWorker(
               lastError: errorMsg,
             });
           }
-          console.error(`[Orchestrator] Failed to spawn worker "${resolvedProfile.name}":`, errorMsg);
+          logger.error(`[Orchestrator] Failed to spawn worker "${resolvedProfile.name}": ${errorMsg}`);
           throw error;
         }
       }
     );
   })();
 
-  console.log(`[DEBUG:spawner] Setting inFlightSpawns for "${profile.id}" BEFORE async work, mapSize will be=${inFlightSpawns.size + 1}`);
+  logger.debug(
+    `[spawner] Setting inFlightSpawns for "${profile.id}" BEFORE async work, mapSize will be=${inFlightSpawns.size + 1}`
+  );
   inFlightSpawns.set(profile.id, spawnPromise);
   try {
     const result = await spawnPromise;
-    console.log(`[DEBUG:spawner] spawnWorker completed for "${profile.id}", status=${result.status}, pid=${result.pid}`);
+    logger.debug(`[spawner] spawnWorker completed for "${profile.id}", status=${result.status}, pid=${result.pid}`);
     return result;
   } finally {
     if (inFlightSpawns.get(profile.id) === spawnPromise) {
-      console.log(`[DEBUG:spawner] Removing inFlightSpawns for "${profile.id}"`);
+      logger.debug(`[spawner] Removing inFlightSpawns for "${profile.id}"`);
       inFlightSpawns.delete(profile.id);
     }
   }
@@ -574,6 +590,7 @@ export async function connectToWorker(
     serverUrl: `http://127.0.0.1:${port}`,
     directory: process.cwd(),
     startedAt: new Date(),
+    modelResolution: "connected to existing worker",
   };
 
   registry.register(instance);
@@ -646,7 +663,7 @@ export async function stopWorker(workerId: string): Promise<boolean> {
     }
     return true;
   } catch (error) {
-    console.error(`[Orchestrator] Error stopping worker "${workerId}":`, error);
+    logger.error(`[Orchestrator] Error stopping worker "${workerId}": ${error instanceof Error ? error.message : String(error)}`);
     return false;
   }
 }
@@ -786,13 +803,13 @@ export async function spawnWorkers(
       try {
         const instance = await spawnWorker(profile, options);
         succeeded.push(instance);
-        console.log(`[Orchestrator] Worker "${profile.id}" spawned (${succeeded.length}/${profiles.length})`);
+        logger.info(`[Orchestrator] Worker "${profile.id}" spawned (${succeeded.length}/${profiles.length})`);
       } catch (err) {
         failed.push({
           profile,
           error: err instanceof Error ? err.message : String(err),
         });
-        console.error(`[Orchestrator] Worker "${profile.id}" failed: ${err instanceof Error ? err.message : String(err)}`);
+        logger.error(`[Orchestrator] Worker "${profile.id}" failed: ${err instanceof Error ? err.message : String(err)}`);
       }
     }
   } else {

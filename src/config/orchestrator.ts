@@ -91,6 +91,7 @@ function parseOrchestratorConfigFile(raw: unknown): Partial<OrchestratorConfigFi
     if (raw.ui.defaultListFormat === "markdown" || raw.ui.defaultListFormat === "json") {
       ui.defaultListFormat = raw.ui.defaultListFormat;
     }
+    if (typeof raw.ui.debug === "boolean") ui.debug = raw.ui.debug;
     if (typeof raw.ui.firstRunDemo === "boolean") ui.firstRunDemo = raw.ui.firstRunDemo;
     partial.ui = ui as OrchestratorConfig["ui"];
   }
@@ -132,6 +133,54 @@ function parseOrchestratorConfigFile(raw: unknown): Partial<OrchestratorConfigFi
       pruning.protectedTools = raw.pruning.protectedTools;
     }
     partial.pruning = pruning as OrchestratorConfig["pruning"];
+  }
+
+  if (isPlainObject(raw.workflows)) {
+    const workflows: Record<string, unknown> = {};
+    if (typeof raw.workflows.enabled === "boolean") workflows.enabled = raw.workflows.enabled;
+    if (isPlainObject(raw.workflows.roocodeBoomerang)) {
+      const roocode: Record<string, unknown> = {};
+      if (typeof raw.workflows.roocodeBoomerang.enabled === "boolean") roocode.enabled = raw.workflows.roocodeBoomerang.enabled;
+      if (typeof raw.workflows.roocodeBoomerang.maxSteps === "number") roocode.maxSteps = raw.workflows.roocodeBoomerang.maxSteps;
+      if (typeof raw.workflows.roocodeBoomerang.maxTaskChars === "number") roocode.maxTaskChars = raw.workflows.roocodeBoomerang.maxTaskChars;
+      if (typeof raw.workflows.roocodeBoomerang.maxCarryChars === "number") roocode.maxCarryChars = raw.workflows.roocodeBoomerang.maxCarryChars;
+      if (typeof raw.workflows.roocodeBoomerang.perStepTimeoutMs === "number") {
+        roocode.perStepTimeoutMs = raw.workflows.roocodeBoomerang.perStepTimeoutMs;
+      }
+      if (Array.isArray(raw.workflows.roocodeBoomerang.steps)) {
+        const steps = raw.workflows.roocodeBoomerang.steps
+          .map((s: unknown) => {
+            if (!isPlainObject(s)) return undefined;
+            const id = typeof s.id === "string" ? s.id : undefined;
+            if (!id) return undefined;
+            const step: Record<string, unknown> = { id };
+            if (typeof s.title === "string") step.title = s.title;
+            if (typeof s.workerId === "string") step.workerId = s.workerId;
+            if (typeof s.prompt === "string") step.prompt = s.prompt;
+            if (typeof s.carry === "boolean") step.carry = s.carry;
+            return step;
+          })
+          .filter(Boolean);
+        if (steps.length > 0) roocode.steps = steps;
+      }
+      workflows.roocodeBoomerang = roocode;
+    }
+    partial.workflows = workflows as OrchestratorConfig["workflows"];
+  }
+
+  if (isPlainObject(raw.security)) {
+    const security: Record<string, unknown> = {};
+    if (isPlainObject(raw.security.workflows)) {
+      const workflows: Record<string, unknown> = {};
+      if (typeof raw.security.workflows.maxSteps === "number") workflows.maxSteps = raw.security.workflows.maxSteps;
+      if (typeof raw.security.workflows.maxTaskChars === "number") workflows.maxTaskChars = raw.security.workflows.maxTaskChars;
+      if (typeof raw.security.workflows.maxCarryChars === "number") workflows.maxCarryChars = raw.security.workflows.maxCarryChars;
+      if (typeof raw.security.workflows.perStepTimeoutMs === "number") {
+        workflows.perStepTimeoutMs = raw.security.workflows.perStepTimeoutMs;
+      }
+      security.workflows = workflows;
+    }
+    partial.security = security as OrchestratorConfig["security"];
   }
 
   return partial;
@@ -194,6 +243,7 @@ export async function loadOrchestratorConfig(input: {
       injectSystemContext: true,
       systemContextMaxWorkers: 12,
       defaultListFormat: "markdown",
+      debug: false,
       firstRunDemo: true,
     },
     notifications: {
@@ -211,6 +261,24 @@ export async function loadOrchestratorConfig(input: {
       maxToolOutputChars: 12000,
       maxToolInputChars: 4000,
       protectedTools: ["task", "todowrite", "todoread"],
+    },
+    workflows: {
+      enabled: true,
+      roocodeBoomerang: {
+        enabled: true,
+        maxSteps: 4,
+        maxTaskChars: 12000,
+        maxCarryChars: 24000,
+        perStepTimeoutMs: 120_000,
+      },
+    },
+    security: {
+      workflows: {
+        maxSteps: 4,
+        maxTaskChars: 12000,
+        maxCarryChars: 24000,
+        perStepTimeoutMs: 120_000,
+      },
     },
     profiles: [],
     workers: [],
@@ -266,6 +334,8 @@ export async function loadOrchestratorConfig(input: {
     agent: (mergedFile.agent ?? defaultsFile.agent) as OrchestratorConfig["agent"],
     commands: (mergedFile.commands ?? defaultsFile.commands) as OrchestratorConfig["commands"],
     pruning: (mergedFile.pruning ?? defaultsFile.pruning) as OrchestratorConfig["pruning"],
+    workflows: (mergedFile.workflows ?? defaultsFile.workflows) as OrchestratorConfig["workflows"],
+    security: (mergedFile.security ?? defaultsFile.security) as OrchestratorConfig["security"],
     profiles,
     spawn,
   };

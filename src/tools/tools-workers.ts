@@ -7,6 +7,7 @@ import { sendToWorker, spawnWorker, spawnWorkers, stopWorker } from "../workers/
 import { renderMarkdownTable, toBool } from "./markdown";
 import { normalizeModelInput } from "./normalize-model";
 import { getClient, getDefaultListFormat, getDirectory, getProfiles, getSpawnDefaults, type ToolContext } from "./state";
+import { logger } from "../core/logger";
 
 export const listWorkers = tool({
   description: "List all available workers in the orchestrator registry, or get detailed info for a specific worker",
@@ -27,6 +28,7 @@ export const listWorkers = tool({
         id: instance.profile.id,
         name: instance.profile.name,
         model: instance.profile.model,
+        modelResolution: instance.modelResolution,
         purpose: instance.profile.purpose,
         whenToUse: instance.profile.whenToUse,
         status: instance.status,
@@ -44,6 +46,7 @@ export const listWorkers = tool({
         "",
         `- Status: ${data.status}`,
         `- Model: ${data.model}`,
+        data.modelResolution ? `- Model resolution: ${data.modelResolution}` : "",
         `- Port: ${data.port}`,
         `- Vision: ${data.supportsVision ? "yes" : "no"}`,
         `- Web: ${data.supportsWeb ? "yes" : "no"}`,
@@ -283,7 +286,7 @@ You can also provide custom configuration to override defaults.`,
     customId: tool.schema.string().optional().describe("Custom ID for this worker instance"),
     showToast: tool.schema.boolean().optional().describe("Show a toast notification in the UI"),
   },
-  async execute(args, _ctx: ToolContext) {
+  async execute(args, ctx: ToolContext) {
     const profiles = getProfiles();
     const baseProfile = getProfile(args.profileId, profiles);
     if (!baseProfile) {
@@ -314,12 +317,16 @@ You can also provide custom configuration to override defaults.`,
           .catch(() => {});
       }
       const { basePort, timeout } = getSpawnDefaults();
+      const existing = registry.getWorker(profile.id);
       const instance = await spawnWorker(profile, {
         basePort,
         timeout,
         directory: getDirectory(),
         client,
       });
+      if (ctx?.sessionID && !existing && instance.modelResolution !== "reused existing worker") {
+        registry.trackOwnership(ctx.sessionID, instance.profile.id);
+      }
 
       const warning = instance.warning ? `\nWarning: ${instance.warning}` : "";
       return `Worker "${profile.name}" (${profile.id}) spawned successfully on port ${instance.port}${warning}`;
@@ -334,7 +341,7 @@ export const ensureWorkers = tool({
   args: {
     profileIds: tool.schema.array(tool.schema.string()).describe("Worker profile IDs to ensure are running"),
   },
-  async execute(args, _ctx: ToolContext) {
+  async execute(args, ctx: ToolContext) {
     const profiles = getProfiles();
     const uniqueIds = [...new Set(args.profileIds)];
     const toSpawn: WorkerProfile[] = [];
@@ -354,6 +361,12 @@ export const ensureWorkers = tool({
       directory: getDirectory(),
       client: getClient(),
     });
+    if (ctx?.sessionID) {
+      for (const instance of succeeded) {
+        if (instance.modelResolution === "reused existing worker") continue;
+        registry.trackOwnership(ctx.sessionID, instance.profile.id);
+      }
+    }
 
     const lines: string[] = [];
     if (succeeded.length > 0) lines.push(`Spawned: ${succeeded.map((w) => w.profile.id).join(", ")}`);
@@ -397,25 +410,31 @@ export const delegateTask = tool({
       .optional()
       .describe("Optional attachments to forward (e.g., images for vision tasks)"),
   },
-  async execute(args, _ctx: ToolContext) {
+  async execute(args, ctx: ToolContext) {
     const profiles = getProfiles();
     const requiresVision = args.requiresVision ?? false;
     const autoSpawn = args.autoSpawn ?? true;
     
-    console.log(`[DEBUG:delegateTask] Called with task="${args.task.slice(0, 50)}...", requiresVision=${requiresVision}, autoSpawn=${autoSpawn}, workerId=${args.workerId ?? 'none'}`);
-    console.log(`[DEBUG:delegateTask] Registry state: workers=${registry.workers.size}, active=${registry.getActiveWorkers().length}`);
+    logger.debug(
+      `[delegateTask] Called with task="${args.task.slice(0, 50)}...", requiresVision=${requiresVision}, autoSpawn=${autoSpawn}, workerId=${args.workerId ?? "none"}`
+    );
+    logger.debug(
+      `[delegateTask] Registry state: workers=${registry.workers.size}, active=${registry.getActiveWorkers().length}`
+    );
 
     let targetId = args.workerId;
     if (!targetId) {
       if (requiresVision) {
         const vision = registry.getVisionWorkers();
         targetId = vision[0]?.profile.id;
-        console.log(`[DEBUG:delegateTask] Vision lookup: found=${vision.length}, targetId=${targetId ?? 'none'}`);
+        logger.debug(`[delegateTask] Vision lookup: found=${vision.length}, targetId=${targetId ?? "none"}`);
       } else {
         const matches = registry.getWorkersByCapability(args.task);
         const active = registry.getActiveWorkers();
         targetId = matches[0]?.profile.id ?? active[0]?.profile.id;
-        console.log(`[DEBUG:delegateTask] Capability lookup: matches=${matches.length}, active=${active.length}, targetId=${targetId ?? 'none'}`);
+        logger.debug(
+          `[delegateTask] Capability lookup: matches=${matches.length}, active=${active.length}, targetId=${targetId ?? "none"}`
+        );
       }
     }
 
@@ -429,12 +448,14 @@ export const delegateTask = tool({
               ? "architect"
               : "coder";
 
-      console.log(`[DEBUG:delegateTask] AUTO-SPAWNING: No targetId found, autoSpawn=true, guessing profile="${guessProfile}"`);
+      logger.debug(
+        `[delegateTask] AUTO-SPAWNING: No targetId found, autoSpawn=true, guessing profile="${guessProfile}"`
+      );
       
       const profile = getProfile(guessProfile, profiles);
       if (!profile) return `No suitable profile found to spawn (wanted "${guessProfile}").`;
       const { basePort, timeout } = getSpawnDefaults();
-      console.log(`[DEBUG:delegateTask] Spawning worker with profile="${profile.id}", model="${profile.model}"`);
+      logger.debug(`[delegateTask] Spawning worker with profile="${profile.id}", model="${profile.model}"`);
       const instance = await spawnWorker(profile, {
         basePort,
         timeout,
@@ -442,7 +463,10 @@ export const delegateTask = tool({
         client: getClient(),
       });
       targetId = instance.profile.id;
-      console.log(`[DEBUG:delegateTask] Spawned worker: id=${targetId}, status=${instance.status}`);
+      logger.debug(`[delegateTask] Spawned worker: id=${targetId}, status=${instance.status}`);
+      if (ctx?.sessionID && instance.modelResolution !== "reused existing worker") {
+        registry.trackOwnership(ctx.sessionID, instance.profile.id);
+      }
     }
 
     if (!targetId) {

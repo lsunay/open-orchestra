@@ -1,5 +1,5 @@
 import type { PluginInput } from "@opencode-ai/plugin";
-import type { WorkerProfile } from "../types";
+import type { OrchestratorConfig, WorkerProfile } from "../types";
 import { builtInProfiles } from "../config/profiles";
 
 export type ToolContext = {
@@ -15,6 +15,8 @@ let client: PluginInput["client"] | undefined;
 let spawnDefaults = { basePort: 14096, timeout: 30000 };
 let profiles: Record<string, WorkerProfile> = builtInProfiles;
 let defaultListFormat: "markdown" | "json" = "markdown";
+let workflowsConfig: OrchestratorConfig["workflows"] | undefined;
+let securityConfig: OrchestratorConfig["security"] | undefined;
 
 export function getDirectory(): string {
   return directory;
@@ -42,6 +44,14 @@ export function getProfiles(): Record<string, WorkerProfile> {
 
 export function getDefaultListFormat(): "markdown" | "json" {
   return defaultListFormat;
+}
+
+export function getWorkflowsConfig(): OrchestratorConfig["workflows"] | undefined {
+  return workflowsConfig;
+}
+
+export function getSecurityConfig(): OrchestratorConfig["security"] | undefined {
+  return securityConfig;
 }
 
 export function setDirectory(dir: string) {
@@ -72,3 +82,10 @@ export function setUiDefaults(input: { defaultListFormat?: "markdown" | "json" }
   if (input.defaultListFormat) defaultListFormat = input.defaultListFormat;
 }
 
+export function setWorkflowConfig(next: OrchestratorConfig["workflows"] | undefined) {
+  workflowsConfig = next;
+}
+
+export function setSecurityConfig(next: OrchestratorConfig["security"] | undefined) {
+  securityConfig = next;
+}

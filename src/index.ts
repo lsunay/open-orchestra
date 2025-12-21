@@ -1,8 +1,19 @@
 import type { Plugin } from "@opencode-ai/plugin";
 import { loadOrchestratorConfig } from "./config/orchestrator";
 import { registry } from "./core/registry";
-import { coreOrchestratorTools, setClient, setDirectory, setProfiles, setProjectId, setSpawnDefaults, setUiDefaults, setWorktree } from "./tools";
-import { spawnWorkers } from "./workers/spawner";
+import {
+  coreOrchestratorTools,
+  setClient,
+  setDirectory,
+  setProfiles,
+  setProjectId,
+  setSecurityConfig,
+  setSpawnDefaults,
+  setUiDefaults,
+  setWorkflowConfig,
+  setWorktree,
+} from "./tools";
+import { spawnWorkers, stopWorker } from "./workers/spawner";
 import type { WorkerInstance } from "./types";
 import type { Config } from "@opencode-ai/sdk";
 import { createIdleNotifier } from "./ux/idle-notification";
@@ -11,11 +22,13 @@ import { createPruningTransform } from "./ux/pruning";
 import { resolveModelRef } from "./models/catalog";
 import { ensureRuntime, shutdownAllWorkers } from "./core/runtime";
 import { removeSessionEntry, upsertSessionEntry } from "./core/device-registry";
+import { logger, setLoggerConfig } from "./core/logger";
+import { loadWorkflows } from "./workflows";
 
 export const OrchestratorPlugin: Plugin = async (ctx) => {
   // CRITICAL: Prevent recursive spawning - if this is a worker process, skip orchestrator initialization
   if (process.env.OPENCODE_ORCHESTRATOR_WORKER === "1") {
-    console.log("[Orchestrator] Skipping plugin load - this is a worker process");
+    logger.info("[Orchestrator] Skipping plugin load - this is a worker process");
     return {}; // Return empty plugin - workers don't need orchestrator capabilities
   }
 
@@ -34,6 +47,10 @@ export const OrchestratorPlugin: Plugin = async (ctx) => {
   setSpawnDefaults({ basePort: config.basePort, timeout: config.startupTimeout });
   setProfiles(config.profiles);
   setUiDefaults({ defaultListFormat: config.ui?.defaultListFormat });
+  setLoggerConfig({ debug: config.ui?.debug === true });
+  setWorkflowConfig(config.workflows);
+  setSecurityConfig(config.security);
+  loadWorkflows(config);
 
   const showToast = (message: string, variant: "success" | "info" | "warning" | "error") =>
     (config.ui?.toasts === false
@@ -76,20 +93,20 @@ export const OrchestratorPlugin: Plugin = async (ctx) => {
   }
 
   if (config.autoSpawn && config.spawn.length > 0) {
-    console.log(`[DEBUG:index] AutoSpawn enabled: spawning ${config.spawn.length} worker(s): [${config.spawn.join(', ')}]`);
+    logger.debug(`[index] AutoSpawn enabled: spawning ${config.spawn.length} worker(s): [${config.spawn.join(", ")}]`);
     void (async () => {
       void showToast(`Spawning ${config.spawn.length} worker(s)…`, "info");
       const profilesToSpawn = config.spawn.map((id) => config.profiles[id]).filter(Boolean);
-      console.log(`[DEBUG:index] Resolved profiles to spawn: [${profilesToSpawn.map(p => p.id).join(', ')}]`);
+      logger.debug(`[index] Resolved profiles to spawn: [${profilesToSpawn.map((p) => p.id).join(", ")}]`);
       const { succeeded, failed } = await spawnWorkers(profilesToSpawn, {
         basePort: config.basePort,
         timeout: config.startupTimeout,
         directory: ctx.directory,
         client: ctx.client,
       });
-      console.log(`[DEBUG:index] AutoSpawn complete: succeeded=${succeeded.length}, failed=${failed.length}`);
+      logger.debug(`[index] AutoSpawn complete: succeeded=${succeeded.length}, failed=${failed.length}`);
       if (failed.length > 0) {
-        console.log(`[DEBUG:index] AutoSpawn failures: ${failed.map(f => `${f.profile.id}: ${f.error}`).join('; ')}`);
+        logger.debug(`[index] AutoSpawn failures: ${failed.map((f) => `${f.profile.id}: ${f.error}`).join("; ")}`);
       }
       if (failed.length === 0) {
         void showToast(`Spawned ${succeeded.length} worker(s)`, "success");
@@ -100,11 +117,13 @@ export const OrchestratorPlugin: Plugin = async (ctx) => {
         );
       }
     })().catch((err) => {
-      console.log(`[DEBUG:index] AutoSpawn EXCEPTION: ${err instanceof Error ? err.message : String(err)}`);
+      logger.error(`[index] AutoSpawn exception: ${err instanceof Error ? err.message : String(err)}`);
       void showToast(`Auto-spawn failed: ${err instanceof Error ? err.message : String(err)}`, "error");
     });
   } else {
-    console.log(`[DEBUG:index] AutoSpawn disabled or no workers to spawn: autoSpawn=${config.autoSpawn}, spawn.length=${config.spawn.length}`);
+    logger.debug(
+      `[index] AutoSpawn disabled or no workers to spawn: autoSpawn=${config.autoSpawn}, spawn.length=${config.spawn.length}`
+    );
   }
 
   const idleNotifier = createIdleNotifier(ctx, config.notifications?.idle ?? {});
@@ -224,6 +243,17 @@ export const OrchestratorPlugin: Plugin = async (ctx) => {
           },
         };
 
+        if (config.workflows?.enabled !== false) {
+          baseCommands[`${prefix}workflows`] = {
+            description: "List available workflows",
+            template: "Call list_workflows({ format: 'markdown' }).",
+          };
+          baseCommands[`${prefix}boomerang`] = {
+            description: "Run the RooCode boomerang workflow (plan, implement, review, fix)",
+            template: "Call run_workflow({ workflowId: 'roocode-boomerang', task: '<task>' }).",
+          };
+        }
+
         const profileCommands: Record<string, any> = {};
         for (const profile of Object.values(config.profiles)) {
           profileCommands[`${prefix}spawn.${profile.id}`] = {
@@ -270,8 +300,13 @@ export const OrchestratorPlugin: Plugin = async (ctx) => {
       if (event.type === "session.deleted") {
         const sessionId = (event as any)?.properties?.info?.id as string | undefined;
         if (sessionId) await removeSessionEntry(sessionId, process.pid).catch(() => {});
-        if (sessionId && orchestratorSessionIds.delete(sessionId)) {
-          await shutdownAllWorkers().catch(() => {});
+        if (sessionId) {
+          const owned = registry.getWorkersForSession(sessionId);
+          for (const workerId of owned) {
+            await stopWorker(workerId).catch(() => {});
+          }
+          registry.clearSessionOwnership(sessionId);
+          orchestratorSessionIds.delete(sessionId);
         }
       }
       await idleNotifier({ event });

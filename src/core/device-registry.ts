@@ -2,6 +2,7 @@ import { existsSync } from "node:fs";
 import { mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { logger } from "./logger";
 
 export type DeviceRegistryWorkerEntry = {
   kind: "worker";
@@ -148,8 +149,9 @@ export async function listDeviceRegistry(path = getDeviceRegistryPath()): Promis
   await pruneDeadEntries(path).catch(() => {});
   const file = await readRegistryFile(path);
   const elapsed = Date.now() - start;
-  if (elapsed > 50) { // Only log if it takes more than 50ms
-    console.log(`[DEBUG:device-registry] listDeviceRegistry: entries=${file.entries.length}, elapsed=${elapsed}ms`);
+  if (elapsed > 50) {
+    // Only log if it takes more than 50ms
+    logger.debug(`[device-registry] listDeviceRegistry: entries=${file.entries.length}, elapsed=${elapsed}ms`);
   }
   return file.entries;
 }

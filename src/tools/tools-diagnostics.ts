@@ -4,6 +4,7 @@ import { listDeviceRegistry } from "../core/device-registry";
 import { formatBytes, listOpencodeServeProcesses } from "../core/process-metrics";
 import { renderMarkdownTable } from "./markdown";
 import { getDefaultListFormat } from "./state";
+import { getLogBuffer } from "../core/logger";
 
 export const orchestratorDiagnostics = tool({
   description:
@@ -50,14 +51,22 @@ export const orchestratorDiagnostics = tool({
       duplicateWorkerIdsInDeviceRegistry: dupWorkerIds,
     };
 
+    const logs = getLogBuffer(100);
     if (format === "json") {
-      return JSON.stringify({ summary, workers, deviceRegistry: device, opencodeServe: opencode }, null, 2);
+      return JSON.stringify({ summary, workers, deviceRegistry: device, opencodeServe: opencode, logs }, null, 2);
     }
 
     const opencodeRows = opencode
       .sort((a, b) => (b.rssBytes ?? 0) - (a.rssBytes ?? 0))
       .slice(0, 20)
       .map((p) => [String(p.pid), p.rssBytes ? formatBytes(p.rssBytes) : "", p.args.slice(0, 140)]);
+
+    const logRows = logs
+      .slice()
+      .reverse()
+      .slice(0, 50)
+      .reverse()
+      .map((l) => [new Date(l.at).toISOString(), l.level, l.message.slice(0, 200)]);
 
     return [
       "# Orchestrator Diagnostics",
@@ -71,6 +80,9 @@ export const orchestratorDiagnostics = tool({
       "## Workers (in-memory registry)",
       workerRows.length ? renderMarkdownTable(["Worker", "Status", "PID", "RSS", "Port", "Session"], workerRows) : "(none)",
       "",
+      "## Recent logs",
+      logRows.length ? renderMarkdownTable(["Time", "Level", "Message"], logRows) : "(none)",
+      "",
       "## opencode serve (top 20 by RSS)",
       opencodeRows.length ? renderMarkdownTable(["PID", "RSS", "Args"], opencodeRows) : "(none)",
     ]
@@ -78,4 +90,3 @@ export const orchestratorDiagnostics = tool({
       .join("\n");
   },
 });
-

@@ -4,7 +4,17 @@
  * This file is intentionally small: tool implementations live in per-area modules.
  */
 
-export { setClient, setDirectory, setProfiles, setProjectId, setSpawnDefaults, setUiDefaults, setWorktree } from "./state";
+export {
+  setClient,
+  setDirectory,
+  setProfiles,
+  setProjectId,
+  setSecurityConfig,
+  setSpawnDefaults,
+  setUiDefaults,
+  setWorkflowConfig,
+  setWorktree,
+} from "./state";
 
 export {
   askWorker,
@@ -45,6 +55,7 @@ export {
   orchestratorTodoView,
 } from "./tools-ux";
 export { orchestratorDiagnostics } from "./tools-diagnostics";
+export { listWorkflowsTool, runWorkflowTool } from "./tools-workflows";
 
 import {
   askWorker,
@@ -85,6 +96,7 @@ import {
   orchestratorTodoView,
 } from "./tools-ux";
 import { orchestratorDiagnostics } from "./tools-diagnostics";
+import { listWorkflowsTool, runWorkflowTool } from "./tools-workflows";
 
 /**
  * Core tools exported for the plugin (simplified from 27 to 8 essential tools)
@@ -105,6 +117,8 @@ export const coreOrchestratorTools = {
   list_workers: listWorkers,
   list_models: listModels,
   orchestrator_status: orchestratorConfig,
+  list_workflows: listWorkflowsTool,
+  run_workflow: runWorkflowTool,
 
   // Observability (useful for orchestration + debugging)
   orchestrator_results: orchestratorResults,

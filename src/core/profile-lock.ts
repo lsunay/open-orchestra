@@ -2,6 +2,7 @@ import { existsSync } from "node:fs";
 import { mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { logger } from "./logger";
 
 function getUserConfigDir(): string {
   if (process.platform === "win32") {
@@ -72,7 +73,7 @@ export async function withWorkerProfileLock<T>(
   const started = Date.now();
   let attempts = 0;
 
-  console.error(`[DEBUG:profile-lock] Acquiring lock for "${profileId}", pid=${process.pid}, timeoutMs=${timeoutMs}`);
+  logger.debug(`[profile-lock] Acquiring lock for "${profileId}", pid=${process.pid}, timeoutMs=${timeoutMs}`);
 
   while (true) {
     attempts++;
@@ -81,7 +82,9 @@ export async function withWorkerProfileLock<T>(
     const existing = await readLockFile(lockPath);
 
     if (!existing || !isProcessAlive(existing.pid) || now - existing.createdAt > maxAgeMs) {
-      console.error(`[DEBUG:profile-lock] Lock available for "${profileId}" (existing=${!!existing}, alive=${existing ? isProcessAlive(existing.pid) : 'n/a'}), attempt=${attempts}`);
+      logger.debug(
+        `[profile-lock] Lock available for "${profileId}" (existing=${!!existing}, alive=${existing ? isProcessAlive(existing.pid) : "n/a"}), attempt=${attempts}`
+      );
       await unlink(lockPath).catch(() => {});
       const next: LockFile = { pid: process.pid, createdAt: now, updatedAt: now, key: profileId };
       await writeLockFileAtomic(lockPath, next);
@@ -89,18 +92,27 @@ export async function withWorkerProfileLock<T>(
       // Confirm we own it (last-writer wins if multiple raced to "acquire").
       const confirm = await readLockFile(lockPath);
       if (confirm?.pid === process.pid) {
-        console.error(`[DEBUG:profile-lock] Lock ACQUIRED for "${profileId}", pid=${process.pid}, attempts=${attempts}, elapsed=${Date.now() - started}ms`);
+        logger.debug(
+          `[profile-lock] Lock ACQUIRED for "${profileId}", pid=${process.pid}, attempts=${attempts}, elapsed=${Date.now() - started}ms`
+        );
         break;
       } else {
-        console.error(`[DEBUG:profile-lock] Lock RACE LOST for "${profileId}", winner pid=${confirm?.pid}, our pid=${process.pid}`);
+        logger.debug(
+          `[profile-lock] Lock RACE LOST for "${profileId}", winner pid=${confirm?.pid}, our pid=${process.pid}`
+        );
       }
     } else {
       if (now - started > timeoutMs) {
-        console.error(`[DEBUG:profile-lock] Lock TIMEOUT for "${profileId}", held by pid=${existing.pid}, attempts=${attempts}`);
+        logger.debug(
+          `[profile-lock] Lock TIMEOUT for "${profileId}", held by pid=${existing.pid}, attempts=${attempts}`
+        );
         throw new Error(`Timed out waiting for worker profile lock "${profileId}" (held by pid ${existing.pid})`);
       }
-      if (attempts % 20 === 0) { // Log every 20 attempts (~1.5 seconds)
-        console.error(`[DEBUG:profile-lock] Waiting for lock "${profileId}", held by pid=${existing.pid}, attempts=${attempts}, elapsed=${Date.now() - started}ms`);
+      if (attempts % 20 === 0) {
+        // Log every 20 attempts (~1.5 seconds)
+        logger.debug(
+          `[profile-lock] Waiting for lock "${profileId}", held by pid=${existing.pid}, attempts=${attempts}, elapsed=${Date.now() - started}ms`
+        );
       }
       await sleep(pollMs);
     }
@@ -111,10 +123,12 @@ export async function withWorkerProfileLock<T>(
   } finally {
     const cur = await readLockFile(lockPath).catch(() => undefined);
     if (cur?.pid === process.pid) {
-      console.error(`[DEBUG:profile-lock] Lock RELEASED for "${profileId}", pid=${process.pid}`);
+      logger.debug(`[profile-lock] Lock RELEASED for "${profileId}", pid=${process.pid}`);
       await unlink(lockPath).catch(() => {});
     } else {
-      console.error(`[DEBUG:profile-lock] Lock NOT released for "${profileId}" - not owner (cur pid=${cur?.pid}, our pid=${process.pid})`);
+      logger.debug(
+        `[profile-lock] Lock NOT released for "${profileId}" - not owner (cur pid=${cur?.pid}, our pid=${process.pid})`
+      );
     }
   }
 }

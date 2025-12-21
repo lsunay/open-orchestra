@@ -9,7 +9,6 @@ import { getHandbookMarkdown } from "../ux/handbook";
 import { getRepoDocsBundle } from "../ux/repo-docs";
 import { sendToWorker, spawnWorker } from "../workers/spawner";
 import { renderMarkdownTable } from "./markdown";
-import { configPathForScope, readOrchestratorConfigFile } from "./config-store";
 import { autofillProfileModels } from "./tools-profiles";
 import { getClient, getDefaultListFormat, getDirectory, getProfiles, getSpawnDefaults, type ToolContext } from "./state";
 
@@ -96,12 +95,14 @@ export const orchestratorStart = tool({
 
     let chosenPersistModel: string | undefined;
     let lastError: string | undefined;
+    let spawned = false;
 
     if (!instance) {
       try {
         const { basePort, timeout } = getSpawnDefaults();
         instance = await spawnWorker(base, { basePort, timeout, directory: getDirectory(), client });
         chosenPersistModel = instance.profile.model;
+        spawned = true;
       } catch (e) {
         lastError = e instanceof Error ? e.message : String(e);
       }
@@ -136,6 +137,10 @@ export const orchestratorStart = tool({
           "Fix: run `orchestrator.dashboard` (see warnings) and switch to a working model via `set_profile_model`.",
         ].join("\n");
       }
+    }
+
+    if (spawned && ctx?.sessionID && instance?.modelResolution !== "reused existing worker") {
+      registry.trackOwnership(ctx.sessionID, instance.profile.id);
     }
 
     if (seedDocs) {
@@ -195,7 +200,7 @@ export const orchestratorDashboard = tool({
         "",
         "No running workers.",
         "",
-        "Next: run `orchestrator.setup` then `orchestrator.spawn.docs` (or any profile).",
+        "Next: run `set_profile_model` (or `autofill_profile_models`) then `orchestrator.spawn.docs` (or any profile).",
       ].join("\n");
     }
 
@@ -350,30 +355,26 @@ export const orchestratorDemo = tool({
     spawnDocs: tool.schema.boolean().optional().describe("Spawn the docs worker (default: true)"),
     showTrace: tool.schema.boolean().optional().describe("Include recent docs-worker trace after running (default: true)"),
     showToast: tool.schema.boolean().optional().describe("Show toasts (default: true)"),
+    autofillModels: tool.schema.boolean().optional().describe("Pin models for built-in profiles (default: false)"),
   },
   async execute(args, ctx: ToolContext) {
     const spawnDocs = args.spawnDocs ?? true;
     const showTrace = args.showTrace ?? true;
     const showToast = args.showToast ?? true;
+    const autofillModels = args.autofillModels ?? false;
     const scope = args.scope ?? "global";
 
     const sections: string[] = [];
     sections.push(getHandbookMarkdown());
 
     const client = getClient();
-    if (client) {
-      const path = configPathForScope(scope, getDirectory());
-      const existing = await readOrchestratorConfigFile(path);
-      const hasAnyProfileOverride =
-        Array.isArray(existing.profiles) && existing.profiles.some((p) => typeof p === "object" && p && "id" in p);
-      if (!hasAnyProfileOverride) {
-        sections.push("", "## Setup", "");
-        sections.push("Auto-filling profile → model mapping from your current/last-used model…");
-        try {
-          await autofillProfileModels.execute({ scope, setAgent: true, showToast }, ctx as any);
-        } catch (e) {
-          sections.push(`Setup failed: ${e instanceof Error ? e.message : String(e)}`);
-        }
+    if (client && autofillModels) {
+      sections.push("", "## Setup", "");
+      sections.push("Pinning profile → model mapping from your current/last-used model…");
+      try {
+        await autofillProfileModels.execute({ scope, setAgent: true, showToast }, ctx as any);
+      } catch (e) {
+        sections.push(`Setup failed: ${e instanceof Error ? e.message : String(e)}`);
       }
     }
 
@@ -382,6 +383,7 @@ export const orchestratorDemo = tool({
       sections.push("Models are configured manually in this plugin.");
       sections.push("- Pick a model: `orchestrator.models`");
       sections.push("- Configure docs: `set_profile_model({ scope: 'global', profileId: 'docs', model: 'provider/model' })`");
+      sections.push("- Optional auto-pin: `autofill_profile_models({ scope: 'global' })`");
       sections.push("- Start + verify: `orchestrator.start`");
       if (showTrace) {
         sections.push("", "## Trace", "");

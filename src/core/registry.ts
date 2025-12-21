@@ -11,6 +11,7 @@ type SummaryOptions = {
 export class WorkerRegistry implements Registry {
   workers: Map<string, WorkerInstance> = new Map();
   private listeners: Map<string, Set<(instance: WorkerInstance) => void>> = new Map();
+  private sessionWorkers: Map<string, Set<string>> = new Map();
 
   /**
    * Register a new worker instance
@@ -27,6 +28,10 @@ export class WorkerRegistry implements Registry {
     const instance = this.workers.get(id);
     if (instance) {
       this.workers.delete(id);
+      for (const [sessionId, ids] of this.sessionWorkers.entries()) {
+        ids.delete(id);
+        if (ids.size === 0) this.sessionWorkers.delete(sessionId);
+      }
       this.emit("unregistered", instance);
       return true;
     }
@@ -38,6 +43,30 @@ export class WorkerRegistry implements Registry {
    */
   getWorker(id: string): WorkerInstance | undefined {
     return this.workers.get(id);
+  }
+
+  /**
+   * Track which session spawned a worker (used for scoped cleanup)
+   */
+  trackOwnership(sessionId: string | undefined, workerId: string): void {
+    if (!sessionId) return;
+    const next = this.sessionWorkers.get(sessionId) ?? new Set<string>();
+    next.add(workerId);
+    this.sessionWorkers.set(sessionId, next);
+  }
+
+  /**
+   * List worker ids spawned by a session
+   */
+  getWorkersForSession(sessionId: string): string[] {
+    return [...(this.sessionWorkers.get(sessionId) ?? new Set<string>())];
+  }
+
+  /**
+   * Remove ownership mapping for a session
+   */
+  clearSessionOwnership(sessionId: string): void {
+    this.sessionWorkers.delete(sessionId);
   }
 
   /**
@@ -138,6 +167,7 @@ export class WorkerRegistry implements Registry {
       id: w.profile.id,
       name: w.profile.name,
       model: w.profile.model,
+      modelResolution: w.modelResolution,
       purpose: w.profile.purpose,
       whenToUse: w.profile.whenToUse,
       status: w.status,

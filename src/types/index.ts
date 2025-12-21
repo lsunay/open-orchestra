@@ -65,6 +65,8 @@ export interface WorkerInstance {
     };
     durationMs?: number;
   };
+  /** How the worker model was resolved */
+  modelResolution?: string;
 }
 
 export interface Registry {
@@ -73,6 +75,41 @@ export interface Registry {
   getWorkersByCapability(capability: string): WorkerInstance[];
   getActiveWorkers(): WorkerInstance[];
 }
+
+export type WorkflowSecurityConfig = {
+  /** Maximum steps allowed in a workflow */
+  maxSteps?: number;
+  /** Maximum characters allowed in the initial task */
+  maxTaskChars?: number;
+  /** Maximum characters allowed to carry between steps */
+  maxCarryChars?: number;
+  /** Timeout per step (ms) */
+  perStepTimeoutMs?: number;
+};
+
+export type WorkflowStepConfig = {
+  id: string;
+  title?: string;
+  workerId?: string;
+  prompt?: string;
+  carry?: boolean;
+};
+
+export type WorkflowsConfig = {
+  enabled?: boolean;
+  roocodeBoomerang?: {
+    enabled?: boolean;
+    steps?: WorkflowStepConfig[];
+    maxSteps?: number;
+    maxTaskChars?: number;
+    maxCarryChars?: number;
+    perStepTimeoutMs?: number;
+  };
+};
+
+export type SecurityConfig = {
+  workflows?: WorkflowSecurityConfig;
+};
 
 export interface OrchestratorConfig {
   /** Base port to start assigning from */
@@ -97,6 +134,8 @@ export interface OrchestratorConfig {
     systemContextMaxWorkers?: number;
     /** Default tool output format */
     defaultListFormat?: "markdown" | "json";
+    /** Enable debug logging for orchestrator internals */
+    debug?: boolean;
     /**
      * First-run demo behavior (no config file detected):
      * - true: auto-run `orchestrator.demo` once per machine/user
@@ -140,6 +179,10 @@ export interface OrchestratorConfig {
     /** Tools that should never be pruned */
     protectedTools?: string[];
   };
+  /** Workflow configuration */
+  workflows?: WorkflowsConfig;
+  /** Security limits */
+  security?: SecurityConfig;
 }
 
 export type OrchestratorConfigFile = {
@@ -153,6 +196,8 @@ export type OrchestratorConfigFile = {
   agent?: OrchestratorConfig["agent"];
   commands?: OrchestratorConfig["commands"];
   pruning?: OrchestratorConfig["pruning"];
+  workflows?: OrchestratorConfig["workflows"];
+  security?: OrchestratorConfig["security"];
   /** Profiles available to spawn (overrides/custom). Strings reference built-ins. */
   profiles?: Array<string | WorkerProfile>;
   /** Profiles to auto-spawn. Strings reference profiles by id. */

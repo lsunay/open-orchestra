@@ -64,7 +64,7 @@ graph TB
     subgraph Orchestrator["Open Orchestra Hub"]
         Registry["Worker Registry"]
         Config["Config Loader"]
-        Tools["8 Tool APIs"]
+        Tools["Tool APIs"]
     end
     
     subgraph Workers["Specialized Workers"]
@@ -168,6 +168,20 @@ delegate_task({ task: "Find the official React hooks documentation" })
 ask_worker({ workerId: "vision", message: "What's in this image?", attachments: [...] })
 ```
 
+## Workflows
+
+Workflows run multi-step sequences with security limits:
+
+```bash
+list_workflows({ format: "markdown" })
+run_workflow({ workflowId: "roocode-boomerang", task: "Implement the new workflow tools" })
+```
+
+Command shortcuts:
+
+- `orchestrator.workflows`
+- `orchestrator.boomerang`
+
 ## Built-in Profiles
 
 | Profile | Model Tag | Vision | Web | Purpose |
@@ -200,7 +214,7 @@ stateDiagram-v2
 - [Architecture](./docs/architecture.md) - System design and patterns
 - [CHANGELOG](./CHANGELOG.md) - Version history and changes
 
-## Tools (8 total)
+## Tools
 
 | Tool | Description |
 |------|-------------|
@@ -212,6 +226,8 @@ stateDiagram-v2
 | `list_profiles` | Show available worker profiles |
 | `list_models` | Show available models from OpenCode config |
 | `orchestrator_status` | Show orchestrator config and status |
+| `list_workflows` | List registered workflows |
+| `run_workflow` | Run a workflow by id |
 
 ### Commands
 
@@ -222,6 +238,8 @@ stateDiagram-v2
 | `orchestrator.profiles` | List worker profiles |
 | `orchestrator.workers` | List running workers |
 | `orchestrator.spawn.<id>` | Spawn a worker (e.g. spawn.docs) |
+| `orchestrator.workflows` | List workflows |
+| `orchestrator.boomerang` | Run the RooCode boomerang workflow |
 
 ## Advanced: Memory System (Optional)
 
