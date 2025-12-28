@@ -10,7 +10,7 @@ import { getHandbookMarkdown } from "../ux/handbook";
 import { getRepoDocsBundle } from "../ux/repo-docs";
 import { sendToWorker, spawnWorker } from "../workers/spawner";
 import { renderMarkdownTable } from "./markdown";
-import { autofillProfileModels } from "./tools-profiles";
+import { autofillProfileModels } from "./profiles";
 import { getClient, getDefaultListFormat, getDirectory, getProfiles, getSpawnDefaults, type ToolContext } from "./state";
 
 export const orchestratorHelp = tool({

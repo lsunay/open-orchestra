@@ -215,7 +215,7 @@ orchestrator.json                     (project root - fallback)
 
 Configuration is deeply merged with profiles resolved to full objects.
 
-#### 5. Tool APIs (`src/tools/index.ts`)
+#### 5. Tool APIs (`src/command/index.ts`)
 
 22+ tools organized into categories:
 

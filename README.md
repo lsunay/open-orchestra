@@ -317,21 +317,26 @@ bun test
 
 ```
 opencode-orchestrator/
+├── bin/
+│   └── worker-bridge-plugin.mjs
 ├── src/
 │   ├── index.ts              # Plugin entry point
+│   ├── command/
+│   │   ├── index.ts          # Tool registry
+│   │   ├── workers.ts        # Worker commands
+│   │   └── workflows.ts      # Workflow commands
 │   ├── config/
 │   │   ├── orchestrator.ts   # Config loading/merging
 │   │   └── profiles.ts       # Built-in worker profiles
 │   ├── core/
-│   │   └── registry.ts       # Worker registry
+│   │   ├── runtime.ts        # Runtime lifecycle
+│   │   └── worker-pool.ts    # Worker registry + pooling
 │   ├── memory/
 │   │   ├── graph.ts          # Memory graph operations
 │   │   └── neo4j.ts          # Neo4j connection
 │   ├── models/
 │   │   ├── catalog.ts        # Model catalog utilities
 │   │   └── hydrate.ts        # Model resolution
-│   ├── tools/
-│   │   └── index.ts          # 8 tool implementations
 │   ├── types/
 │   │   └── index.ts          # TypeScript definitions
 │   ├── ux/
@@ -353,7 +358,7 @@ opencode-orchestrator/
 
 ## Contributing
 
-Contributions are welcome! Please read our contributing guidelines and submit PRs to the `main` branch.
+Contributions are welcome! Please read [CONTRIBUTING.md](./CONTRIBUTING.md) and submit PRs to the `main` branch.
 
 ## License
 

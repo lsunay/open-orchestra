@@ -57,10 +57,8 @@ function resolveWorkerBridgePluginSpecifier(): string | undefined {
   if (existsSync(configPluginPath)) return pathToFileURL(configPluginPath).href;
 
   const candidates = [
-    // When running from `dist/workers/spawner.js`
-    new URL("../../src/worker-bridge-plugin.mjs", import.meta.url),
-    // When running from `src/workers/spawner.ts`
-    new URL("../worker-bridge-plugin.mjs", import.meta.url),
+    // When running from `dist/workers/spawner.js` or `src/workers/spawner.ts`
+    new URL("../../bin/worker-bridge-plugin.mjs", import.meta.url),
   ];
   for (const url of candidates) {
     try {

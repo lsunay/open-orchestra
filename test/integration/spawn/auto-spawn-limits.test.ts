@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { delegateTask } from "../../../src/tools/tools-workers";
-import { setDirectory, setProfiles, setSpawnDefaults } from "../../../src/tools/state";
+import { delegateTask } from "../../../src/command/workers";
+import { setDirectory, setProfiles, setSpawnDefaults } from "../../../src/command/state";
 import { shutdownAllWorkers } from "../../../src/core/runtime";
 import type { WorkerProfile } from "../../../src/types";
 

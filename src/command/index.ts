@@ -30,7 +30,7 @@ export {
   spawnNewWorker,
   stopWorkerTool,
   workerTrace,
-} from "./tools-workers";
+} from "./workers";
 export {
   autofillProfileModels,
   listModels,
@@ -40,8 +40,8 @@ export {
   setAutoSpawn,
   setOrchestratorAgent,
   setProfileModel,
-} from "./tools-profiles";
-export { memoryLink, memoryPut, memoryRecentTool, memorySearchTool } from "./tools-memory";
+} from "./profiles";
+export { memoryLink, memoryPut, memoryRecentTool, memorySearchTool } from "./memory";
 export {
   clearPassthroughMode,
   enableDocsPassthrough,
@@ -55,9 +55,9 @@ export {
   orchestratorStart,
   orchestratorTodoView,
   setPassthroughMode,
-} from "./tools-ux";
-export { orchestratorDiagnostics } from "./tools-diagnostics";
-export { listWorkflowsTool, runWorkflowTool } from "./tools-workflows";
+} from "./ux";
+export { orchestratorDiagnostics } from "./diagnostics";
+export { listWorkflowsTool, runWorkflowTool } from "./workflows";
 
 import {
   askWorker,
@@ -73,7 +73,7 @@ import {
   spawnNewWorker,
   stopWorkerTool,
   workerTrace,
-} from "./tools-workers";
+} from "./workers";
 import {
   autofillProfileModels,
   listModels,
@@ -83,8 +83,8 @@ import {
   setAutoSpawn,
   setOrchestratorAgent,
   setProfileModel,
-} from "./tools-profiles";
-import { memoryLink, memoryPut, memoryRecentTool, memorySearchTool } from "./tools-memory";
+} from "./profiles";
+import { memoryLink, memoryPut, memoryRecentTool, memorySearchTool } from "./memory";
 import {
   clearPassthroughMode,
   enableDocsPassthrough,
@@ -98,9 +98,9 @@ import {
   orchestratorStart,
   orchestratorTodoView,
   setPassthroughMode,
-} from "./tools-ux";
-import { orchestratorDiagnostics } from "./tools-diagnostics";
-import { listWorkflowsTool, runWorkflowTool } from "./tools-workflows";
+} from "./ux";
+import { orchestratorDiagnostics } from "./diagnostics";
+import { listWorkflowsTool, runWorkflowTool } from "./workflows";
 
 /**
  * Core tools exported for the plugin (simplified from 27 to 8 essential tools)
@@ -167,7 +167,7 @@ export const pluginTools = {
   ensure_workers: ensureWorkers,
   find_worker: findWorker,
   autofill_profile_models: autofillProfileModels,
-  
+
 };
 
 export const orchestratorTools = {

@@ -6,7 +6,7 @@ import { spawnWorker, stopWorker, sendToWorker } from "../src/workers/spawner";
 import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { askWorkerAsync, awaitWorkerJob } from "../src/tools/tools-workers";
+import { askWorkerAsync, awaitWorkerJob } from "../src/command/workers";
 import type { WorkerProfile } from "../src/types";
 import { setupE2eEnv } from "./helpers/e2e-env";
 

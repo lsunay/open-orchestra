@@ -1,10 +1,10 @@
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
-import { WorkerHealthChecker } from "./core/net-utils.js";
-import { SystemOptimizer } from "./core/system-optimizer.js";
-import { ConfigFileMonitor, WorkerWorkspaceManager } from "./core/file-monitor.js";
-import { logger } from "./core/logger.js";
+import { WorkerHealthChecker } from "../core/net-utils.js";
+import { SystemOptimizer } from "../core/system-optimizer.js";
+import { ConfigFileMonitor, WorkerWorkspaceManager } from "../core/file-monitor.js";
+import { logger } from "../core/logger.js";
 
 // Handle both ESM and CommonJS compatibility
 const __filename = fileURLToPath(import.meta.url);
@@ -202,7 +202,7 @@ export function createMain() {
     // Enhanced main entry point with better error handling
     async start() {
       try {
-        const { OrchestratorPlugin } = await import('./index.js');
+        const { OrchestratorPlugin } = await import("../index.js");
         return OrchestratorPlugin;
       } catch (error) {
         console.error('Failed to load orchestrator plugin:', error);

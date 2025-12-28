@@ -12,7 +12,7 @@ import {
   setUiDefaults,
   setWorkflowConfig,
   setWorktree,
-} from "./tools";
+} from "./command";
 import { spawnWorkers, stopWorker } from "./workers/spawner";
 import type { WorkerInstance } from "./types";
 import type { Config } from "@opencode-ai/sdk";
