@@ -133,3 +133,8 @@ Run:
 - Ship Task 02 enabling `docs` as `subagent` behind config only.
 - Ship Task 03 enabling deterministic workflow gating by default only if explicitly configured; otherwise keep current behavior and provide an opt-in.
 
+## Progress
+
+- Task 01: Done (config + schema + types).
+- Task 02: Done (subagent runtime + UX shortcuts).
+- Task 03: Done (step gating + intervene policy + continue workflow).

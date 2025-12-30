@@ -194,8 +194,9 @@ class MockJobRegistry {
     this.pruneCallCount++;
     const now = Date.now();
     
-    // First, remove old jobs
+    // First, remove old non-running jobs
     for (const [id, job] of this.jobs.entries()) {
+      if (job.status === "running") continue;
       if (now - job.startedAt > this.maxJobAgeMs) {
         this.jobs.delete(id);
         this.totalPruned++;
@@ -205,6 +206,7 @@ class MockJobRegistry {
     // Then, enforce max jobs (remove oldest first)
     if (this.jobs.size > this.maxJobs) {
       const sortedJobs = Array.from(this.jobs.entries())
+        .filter(([, job]) => job.status !== "running")
         .sort((a, b) => a[1].startedAt - b[1].startedAt);
       
       const toRemove = sortedJobs.slice(0, this.jobs.size - this.maxJobs);

@@ -14,6 +14,7 @@ export type WorkflowStepDefinition = {
   prompt: string;
   carry?: boolean;
   timeoutMs?: number;
+  requiredSkills?: string[];
 };
 
 export type WorkflowDefinition = {

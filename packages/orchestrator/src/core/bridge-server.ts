@@ -4,6 +4,7 @@ import { URL } from "node:url";
 import { workerPool } from "./worker-pool";
 import { EventEmitter } from "node:events";
 import { onOrchestratorEvent, publishOrchestratorEvent, type OrchestratorEvent } from "./orchestrator-events";
+import { getWorkflowContextForWorker } from "../skills/context";
 
 // Stream event emitter for real-time worker output
 export const streamEmitter = new EventEmitter();
@@ -31,10 +32,34 @@ async function readJson(req: IncomingMessage): Promise<any> {
   return JSON.parse(body);
 }
 
+function normalizeSkillEventData(type: string, data: Record<string, any>) {
+  if (!type.startsWith("orchestra.skill.")) return data;
+  const workerId = data.worker?.id ?? data.workerId;
+  if (workerId && !data.worker) {
+    const instance = workerPool.get(workerId);
+    data.worker = { id: workerId, ...(instance?.kind || instance?.profile.kind ? { kind: instance?.kind ?? instance?.profile.kind } : {}) };
+  }
+  if (!data.workflow && workerId) {
+    const ctx = getWorkflowContextForWorker(workerId);
+    if (ctx) {
+      data.workflow = { runId: ctx.runId, stepId: ctx.stepId };
+    }
+  }
+  if (!data.source) {
+    data.source = "server";
+  }
+  data.workerId = undefined;
+  return data;
+}
+
 function writeJson(res: ServerResponse, status: number, payload: any) {
   res.statusCode = status;
   res.setHeader("content-type", "application/json");
   res.end(JSON.stringify(payload));
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === "object" && !Array.isArray(value);
 }
 
 function unauthorized(res: ServerResponse) {
@@ -146,7 +171,9 @@ export async function startBridgeServer(): Promise<BridgeServer> {
         if (!body?.type || typeof body.type !== "string") {
           return writeJson(res, 400, { error: "missing_type" });
         }
-        const event = publishOrchestratorEvent(body.type as any, (body.data ?? {}) as any);
+        const raw = isRecord(body.data) ? body.data : {};
+        const payload = normalizeSkillEventData(body.type, raw as Record<string, unknown>);
+        const event = publishOrchestratorEvent(body.type as any, payload as any);
         return writeJson(res, 200, { ok: true, id: event.id, timestamp: event.timestamp });
       }
 

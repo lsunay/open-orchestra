@@ -5,12 +5,14 @@
 import { type Component, createEffect, createMemo, createSignal, For, Show } from "solid-js";
 import { ChatIcon } from "@/components/icons/session-icons";
 import { type Attachment as PromptAttachment, PromptInput } from "@/components/prompt-input";
+import { Badge } from "@/components/ui/badge";
 import { WorkerDetailEmptyState } from "@/components/worker-detail-empty";
 import { WorkerDetailHeader } from "@/components/worker-detail-header";
 import { WorkerMessage } from "@/components/worker-detail-message";
 import { useLayout } from "@/context/layout";
 import { useOpenCode } from "@/context/opencode";
 import { getSessionStatus } from "@/lib/session-utils";
+import { formatRelativeTime } from "@/lib/utils";
 
 /** Primary chat view for a selected session. */
 export const ChatView: Component = () => {
@@ -24,6 +26,7 @@ export const ChatView: Component = () => {
     abortSession,
     workers,
     workerStreams,
+    skillEvents,
   } = useOpenCode();
   const { selectedWorkerId, selectWorker, activeSubagentSessionId, returnToParentSession } = useLayout();
 
@@ -49,6 +52,19 @@ export const ChatView: Component = () => {
     const id = worker()?.id;
     if (!id) return undefined;
     return workerStreams().find((item) => item.workerId === id);
+  });
+  const recentSkillUsage = createMemo(() => {
+    const workerId = worker()?.id;
+    if (!workerId) return { skills: [], at: undefined as number | undefined };
+    const events = skillEvents()
+      .filter((event) => event.workerId === workerId && event.skillName)
+      .sort((a, b) => b.timestamp - a.timestamp);
+    if (events.length === 0) return { skills: [], at: undefined as number | undefined };
+    const latestAt = events[0]?.timestamp;
+    const names = Array.from(
+      new Set(events.filter((event) => event.timestamp === latestAt).map((event) => event.skillName ?? "")),
+    ).filter(Boolean);
+    return { skills: names, at: latestAt };
   });
 
   const status = createMemo(() => getSessionStatus(session(), worker()));
@@ -122,6 +138,20 @@ export const ChatView: Component = () => {
               onAbort={handleAbort}
               onDelete={handleDelete}
             />
+
+            <Show when={recentSkillUsage().skills.length > 0}>
+              <div class="border-b border-border/60 bg-muted/30 px-4 py-2">
+                <div class="flex items-center justify-between text-[10px] uppercase tracking-wide text-muted-foreground">
+                  <span>Skills used (last request)</span>
+                  <Show when={recentSkillUsage().at}>
+                    {(at) => <span>{formatRelativeTime(at())}</span>}
+                  </Show>
+                </div>
+                <div class="mt-2 flex flex-wrap gap-2">
+                  <For each={recentSkillUsage().skills}>{(skill) => <Badge variant="secondary">{skill}</Badge>}</For>
+                </div>
+              </div>
+            </Show>
 
             <div class="flex-1 overflow-auto scrollbar-thin">
               <Show when={isSubagentView() && stream()}>

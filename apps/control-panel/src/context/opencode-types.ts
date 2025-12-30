@@ -73,6 +73,10 @@ export type OrchestratorEventType =
   | "orchestra.workflow.step"
   | "orchestra.workflow.completed"
   | "orchestra.memory.written"
+  | "orchestra.skill.load.started"
+  | "orchestra.skill.load.completed"
+  | "orchestra.skill.load.failed"
+  | "orchestra.skill.permission"
   | "orchestra.error";
 
 export type OrchestratorEvent = {
@@ -81,6 +85,25 @@ export type OrchestratorEvent = {
   type: OrchestratorEventType;
   timestamp: number;
   data: Record<string, unknown>;
+};
+
+export type SkillEventSource = "in-process" | "server";
+
+export type SkillLoadEvent = {
+  id: string;
+  type: "orchestra.skill.load.started" | "orchestra.skill.load.completed" | "orchestra.skill.load.failed";
+  skillName?: string;
+  sessionId?: string;
+  callId?: string;
+  workerId?: string;
+  workerKind?: string;
+  workflowRunId?: string;
+  workflowStepId?: string;
+  source?: SkillEventSource;
+  timestamp: number;
+  durationMs?: number;
+  outputBytes?: number;
+  status?: "success" | "error";
 };
 
 export type WorkflowRunStatus = "running" | "success" | "error";
@@ -128,6 +151,7 @@ export interface OpenCodeState {
   /** Active worker stream chunks (keyed by workerId) */
   workerStreams: Record<string, WorkerStreamChunk>;
   workflowRuns: Record<string, WorkflowRun>;
+  skillEvents: SkillLoadEvent[];
   modelOptions: ModelOption[];
   toolIds: string[];
   lastUpdate: number;
@@ -144,6 +168,7 @@ export interface OpenCodeContextValue {
   /** Active worker stream chunks for live display */
   workerStreams: Accessor<WorkerStreamChunk[]>;
   workflowRuns: Accessor<WorkflowRun[]>;
+  skillEvents: Accessor<SkillLoadEvent[]>;
   subagents: Accessor<SubagentSession[]>;
   activeSubagent: Accessor<SubagentSession | null>;
   lastSubagentEvent: Accessor<SubagentEvent | null>;

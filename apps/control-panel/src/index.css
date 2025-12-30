@@ -1,5 +1,5 @@
-@import "@vercel/geist/font/sans.css";
-@import "@vercel/geist/font/mono.css";
+@import "@fontsource/geist-sans";
+@import "@fontsource/geist-mono";
 
 @tailwind base;
 @tailwind components;

@@ -58,11 +58,13 @@ describe("resolveWorkerEntry", () => {
       whenToUse: "Test",
       kind: "agent",
       execution: "foreground",
+      requiredSkills: ["docs-research", "code-implementer"],
     });
 
     expect(resolved?.kind).toBe("agent");
     expect(resolved?.backend).toBe("agent");
     expect(resolved?.execution).toBe("foreground");
+    expect(resolved?.requiredSkills).toEqual(["docs-research", "code-implementer"]);
   });
 
   test("rejects conflicting backend and kind", () => {

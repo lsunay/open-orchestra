@@ -123,6 +123,22 @@ const ChatIcon: Component = () => (
   </svg>
 );
 
+const SkillsIcon: Component = () => (
+  <svg
+    xmlns="http://www.w3.org/2000/svg"
+    width="16"
+    height="16"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    stroke-width="2"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+  >
+    <path d="M12 3l2.3 4.6L19 8l-3.5 3.4L16.6 16 12 13.5 7.4 16l1.1-4.6L5 8l4.7-.4L12 3Z" />
+  </svg>
+);
+
 const SettingsIcon: Component = () => (
   <svg
     xmlns="http://www.w3.org/2000/svg"
@@ -165,6 +181,7 @@ export const navItems: NavItem[] = [
   { path: "/config", label: "Config", icon: ConfigIcon },
   { path: "/prompts", label: "Prompts", icon: PromptsIcon },
   { path: "/chat", label: "Chat", icon: ChatIcon },
+  { path: "/skills", label: "Skills", icon: SkillsIcon },
   { path: "/settings", label: "Settings", icon: SettingsIcon },
 ].map((item, index) => ({ ...item, shortcut: String(index + 1) }));
 

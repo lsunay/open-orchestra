@@ -9,6 +9,10 @@ const eventTypes: OrchestratorEventType[] = [
   "orchestra.workflow.step",
   "orchestra.workflow.completed",
   "orchestra.memory.written",
+  "orchestra.skill.load.started",
+  "orchestra.skill.load.completed",
+  "orchestra.skill.load.failed",
+  "orchestra.skill.permission",
   "orchestra.error",
 ];
 

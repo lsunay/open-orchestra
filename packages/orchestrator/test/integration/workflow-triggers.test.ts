@@ -51,10 +51,13 @@ describe("workflow triggers", () => {
       runWorkflow: async (input) => {
         captured = input;
         return {
+          runId: "run-vision-1",
           workflowId: input.workflowId,
           workflowName: "Vision Analysis",
+          status: "success",
           startedAt: 0,
           finishedAt: 1,
+          currentStepIndex: 1,
           steps: [
             {
               id: "analyze",
@@ -101,10 +104,13 @@ describe("workflow triggers", () => {
       runWorkflow: async (input) => {
         taskText = input.task;
         return {
+          runId: "run-memory-1",
           workflowId: input.workflowId,
           workflowName: "Memory Capture",
+          status: "success",
           startedAt: 0,
           finishedAt: 1,
+          currentStepIndex: 1,
           steps: [
             {
               id: "record",

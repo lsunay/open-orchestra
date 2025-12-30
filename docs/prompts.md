@@ -27,6 +27,7 @@ The orchestrator uses the OpenCode SDK TUI APIs to reduce confusion and make sta
 - `tui.openHelp()` is used by onboarding tools (first-run flows) to surface built-in docs.
 - `tui.openModels()` is used when no configured model is available.
 - `tui.showToast()` is used for worker spawn/failed events and workflow completion.
+- Workflow step boundaries can be injected into the parent session when `ui.wakeupInjection` is enabled.
 
 ## Glossary alignment
 

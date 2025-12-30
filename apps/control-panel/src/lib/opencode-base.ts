@@ -13,11 +13,25 @@ declare global {
 
 const trimTrailingSlash = (value: string) => value.replace(/\/$/, "");
 
+export const OPENCODE_BASE_OVERRIDES = {
+  openCodeBase: "opencode.baseUrl",
+  skillsBase: "opencode.skillsBase",
+  eventsUrl: "opencode.eventsUrl",
+} as const;
+
+const getStoredOverride = (key: string): string | undefined => {
+  if (typeof window === "undefined") return undefined;
+  const value = window.localStorage.getItem(key);
+  return value && value.trim() ? value.trim() : undefined;
+};
+
 export const resolveOpenCodeBase = (): string | undefined => {
   if (typeof window === "undefined") return undefined;
   const params = new URLSearchParams(window.location.search);
   const paramUrl = params.get("url");
   if (paramUrl) return paramUrl;
+  const storedOverride = getStoredOverride(OPENCODE_BASE_OVERRIDES.openCodeBase);
+  if (storedOverride) return storedOverride;
   if (window.__OPENCODE__?.baseUrl) {
     return window.__OPENCODE__.baseUrl;
   }
@@ -32,6 +46,8 @@ export const resolveSkillsBase = (): string | undefined => {
   const params = new URLSearchParams(window.location.search);
   const paramUrl = params.get("skills");
   if (paramUrl) return paramUrl;
+  const storedOverride = getStoredOverride(OPENCODE_BASE_OVERRIDES.skillsBase);
+  if (storedOverride) return storedOverride;
   if (window.__OPENCODE__?.skillsBase) {
     return window.__OPENCODE__.skillsBase;
   }
@@ -61,6 +77,8 @@ export const resolveOrchestratorEventsUrl = (): string | undefined => {
   const params = new URLSearchParams(window.location.search);
   const paramUrl = params.get("events") ?? params.get("orchestrator");
   if (paramUrl) return normalizeEventsUrl(paramUrl);
+  const storedOverride = getStoredOverride(OPENCODE_BASE_OVERRIDES.eventsUrl);
+  if (storedOverride) return normalizeEventsUrl(storedOverride);
   if (window.__OPENCODE__?.orchestratorEventsUrl) {
     return normalizeEventsUrl(window.__OPENCODE__.orchestratorEventsUrl);
   }

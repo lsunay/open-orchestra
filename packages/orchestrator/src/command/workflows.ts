@@ -4,11 +4,12 @@ import { renderMarkdownTable } from "./markdown";
 import type { WorkflowRunInput } from "../workflows/types";
 import type { OrchestratorContext } from "../context/orchestrator-context";
 import { getOrchestratorContext } from "./state";
-import { resolveWorkflowLimits, runWorkflowWithContext } from "../workflows/runner";
+import { continueWorkflowWithContext, resolveWorkflowLimits, runWorkflowWithContext } from "../workflows/runner";
 
 type WorkflowTools = {
   listWorkflowsTool: ToolDefinition;
   runWorkflowTool: ToolDefinition;
+  continueWorkflowTool: ToolDefinition;
 };
 
 function truncate(text: string, maxChars: number): string {
@@ -77,14 +78,17 @@ export function createWorkflowTools(context: OrchestratorContext): WorkflowTools
 
       const client = context.client;
       if (client) {
-        const failed = result.steps.some((step) => step.status === "error");
+        const failed = result.status === "error" || result.steps.some((step) => step.status === "error");
+        const paused = result.status === "paused";
         void client.tui
           .showToast({
             body: {
-              message: failed
-                ? `Workflow "${result.workflowName}" completed with errors`
-                : `Workflow "${result.workflowName}" completed`,
-              variant: failed ? "warning" : "success",
+              message: paused
+                ? `Workflow "${result.workflowName}" paused`
+                : failed
+                  ? `Workflow "${result.workflowName}" completed with errors`
+                  : `Workflow "${result.workflowName}" completed`,
+              variant: paused ? "info" : failed ? "warning" : "success",
             },
           })
           .catch(() => {});
@@ -96,13 +100,18 @@ export function createWorkflowTools(context: OrchestratorContext): WorkflowTools
       const lines: string[] = [];
       lines.push(`# Workflow: ${result.workflowName}`, "");
       lines.push(`- ID: ${result.workflowId}`);
-      lines.push(`- Steps: ${result.steps.length}`);
-      lines.push(`- Duration: ${result.finishedAt - result.startedAt}ms`, "");
+      lines.push(`- Run: ${result.runId}`);
+      lines.push(`- Status: ${result.status}`);
+      lines.push(`- Steps: ${result.steps.length}/${workflow.steps.length}`);
+      lines.push(`- Duration: ${(result.finishedAt ?? Date.now()) - result.startedAt}ms`, "");
 
       for (const step of result.steps) {
         lines.push(`## ${step.title} (${step.workerId})`);
         lines.push(`- Status: ${step.status}`);
         lines.push(`- Duration: ${step.durationMs}ms`);
+        if (step.warning) {
+          lines.push(`- Warning: ${step.warning}`);
+        }
         if (step.error) {
           lines.push("", `Error: ${step.error}`, "");
           continue;
@@ -110,6 +119,11 @@ export function createWorkflowTools(context: OrchestratorContext): WorkflowTools
         if (step.response) {
           lines.push("", truncate(step.response, 4000), "");
         }
+      }
+
+      if (result.status === "paused") {
+        lines.push("## Next Action");
+        lines.push(`\`continue_workflow({ runId: "${result.runId}" })\``, "");
       }
 
       lines.push(
@@ -120,10 +134,50 @@ export function createWorkflowTools(context: OrchestratorContext): WorkflowTools
     },
   });
 
-  return { listWorkflowsTool, runWorkflowTool };
+  const continueWorkflowTool: ToolDefinition = tool({
+    description: "Continue a paused workflow run by runId.",
+    args: {
+      runId: tool.schema.string().describe("Workflow run ID to continue"),
+      format: tool.schema.enum(["markdown", "json"]).optional().describe("Output format (default: markdown)"),
+    },
+    async execute(args, ctx) {
+      if (context.workflows?.enabled === false) {
+        return "Workflows are disabled. Enable them in orchestrator.json under workflows.enabled.";
+      }
+
+      try {
+        const result = await continueWorkflowWithContext(context, args.runId, { sessionId: ctx?.sessionID });
+        const workflow = getWorkflow(result.workflowId);
+        const totalSteps = workflow?.steps.length ?? result.steps.length;
+
+        const format: "markdown" | "json" = args.format ?? context.defaultListFormat;
+        if (format === "json") return JSON.stringify(result, null, 2);
+
+        const lines: string[] = [];
+        lines.push(`# Workflow Continue: ${result.workflowName}`, "");
+        lines.push(`- ID: ${result.workflowId}`);
+        lines.push(`- Run: ${result.runId}`);
+        lines.push(`- Status: ${result.status}`);
+        lines.push(`- Steps: ${result.steps.length}/${totalSteps}`);
+        lines.push(`- Duration: ${(result.finishedAt ?? Date.now()) - result.startedAt}ms`, "");
+
+        if (result.status === "paused") {
+          lines.push("## Next Action");
+          lines.push(`\`continue_workflow({ runId: "${result.runId}" })\``, "");
+        }
+
+        return lines.join("\n");
+      } catch (err) {
+        return `Failed to continue workflow: ${err instanceof Error ? err.message : String(err)}`;
+      }
+    },
+  });
+
+  return { listWorkflowsTool, runWorkflowTool, continueWorkflowTool };
 }
 
 const defaultTools: WorkflowTools = createWorkflowTools(getOrchestratorContext());
 
 export const listWorkflowsTool: ToolDefinition = defaultTools.listWorkflowsTool;
 export const runWorkflowTool: ToolDefinition = defaultTools.runWorkflowTool;
+export const continueWorkflowTool: ToolDefinition = defaultTools.continueWorkflowTool;

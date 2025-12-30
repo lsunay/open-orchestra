@@ -21,6 +21,7 @@ import {
   MemoryPage,
   OnboardingPage,
   PromptsPage,
+  SkillsPage,
   SettingsPage,
   WorkflowsPage,
 } from "@/pages";
@@ -88,6 +89,7 @@ export const App: Component = () => {
                 <Route path="/prompts" component={PromptsPage} />
                 <Route path="/chat" component={ChatPage} />
                 <Route path="/agents" component={AgentsPage} />
+                <Route path="/skills" component={SkillsPage} />
                 <Route path="/settings" component={SettingsPage} />
                 <Route path="/onboarding" component={OnboardingPage} />
 

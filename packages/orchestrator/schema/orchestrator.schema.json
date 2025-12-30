@@ -114,7 +114,8 @@
                     "workerId": { "type": "string" },
                     "prompt": { "type": "string" },
                     "carry": { "type": "boolean" },
-                    "timeoutMs": { "type": "number" }
+                    "timeoutMs": { "type": "number" },
+                    "requiredSkills": { "type": "array", "items": { "type": "string" } }
                   }
                 }
               }
@@ -164,7 +165,8 @@
                   "workerId": { "type": "string" },
                   "prompt": { "type": "string" },
                   "carry": { "type": "boolean" },
-                  "timeoutMs": { "type": "number" }
+                  "timeoutMs": { "type": "number" },
+                  "requiredSkills": { "type": "array", "items": { "type": "string" } }
                 }
               }
             },
@@ -285,6 +287,7 @@
               "supportsWeb": { "type": "boolean" },
               "temperature": { "type": "number" },
               "tags": { "type": "array", "items": { "type": "string" } },
+              "requiredSkills": { "type": "array", "items": { "type": "string" } },
               "tools": {
                 "type": "object",
                 "additionalProperties": { "type": "boolean" }
@@ -333,6 +336,7 @@
               "supportsWeb": { "type": "boolean" },
               "temperature": { "type": "number" },
               "tags": { "type": "array", "items": { "type": "string" } },
+              "requiredSkills": { "type": "array", "items": { "type": "string" } },
               "tools": {
                 "type": "object",
                 "additionalProperties": { "type": "boolean" }

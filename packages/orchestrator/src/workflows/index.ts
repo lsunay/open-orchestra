@@ -5,6 +5,7 @@ import { buildVisionWorkflow } from "./builtins/vision";
 import { buildMemoryWorkflow } from "./builtins/memory";
 import type { WorkflowDefinition, WorkflowStepDefinition } from "./types";
 import type { WorkflowDefinitionConfig, WorkflowStepConfig } from "../types";
+import { asStringArray } from "../helpers/format";
 
 let loaded = false;
 
@@ -33,6 +34,7 @@ function resolveStepConfig(step: WorkflowStepConfig): WorkflowStepDefinition | u
   if (!id) return undefined;
   const workerId = step.workerId ?? "coder";
   const prompt = step.prompt ?? "Task:\n{task}";
+  const requiredSkills = step.requiredSkills ? asStringArray(step.requiredSkills) ?? [] : [];
   return {
     id,
     title: step.title ?? id,
@@ -40,6 +42,7 @@ function resolveStepConfig(step: WorkflowStepConfig): WorkflowStepDefinition | u
     prompt,
     carry: typeof step.carry === "boolean" ? step.carry : false,
     timeoutMs: typeof step.timeoutMs === "number" ? step.timeoutMs : undefined,
+    ...(requiredSkills.length > 0 ? { requiredSkills } : {}),
   };
 }
 

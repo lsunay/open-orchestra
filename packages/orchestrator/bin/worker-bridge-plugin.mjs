@@ -38,6 +38,7 @@ async function postJson(path, body) {
 }
 
 export const WorkerBridgePlugin = async () => {
+  const skillCalls = new Map();
   const streamChunkTool = tool({
     description: `Stream a chunk of output in real-time to the orchestrator.
 Use this to provide incremental output as you work, enabling the user to see your progress.
@@ -66,6 +67,87 @@ Set final=true on the last chunk to indicate completion.`,
   return {
     tool: {
       stream_chunk: streamChunkTool,
+    },
+    "tool.execute.before": async (input, output) => {
+      if (input.tool !== "skill") return;
+      const { workerId } = getBridgeConfig();
+      if (!workerId) return;
+      const startedAt = Date.now();
+      skillCalls.set(input.callID, { startedAt, args: output.args });
+      const skillName = output?.args?.name;
+      try {
+        await postJson("/v1/events", {
+          type: "orchestra.skill.load.started",
+          data: {
+            sessionId: input.sessionID,
+            callId: input.callID,
+            skillName,
+            workerId,
+            source: "server",
+            timestamp: startedAt,
+          },
+        });
+      } catch {
+        // ignore bridge failures
+      }
+    },
+    "tool.execute.after": async (input, output) => {
+      if (input.tool !== "skill") return;
+      const { workerId } = getBridgeConfig();
+      if (!workerId) return;
+      const entry = skillCalls.get(input.callID);
+      skillCalls.delete(input.callID);
+      const startedAt = entry?.startedAt;
+      const durationMs = startedAt ? Date.now() - startedAt : undefined;
+      const args = entry?.args ?? output?.args;
+      const skillName = args?.name;
+      const outputText = typeof output?.output === "string" ? output.output : "";
+      const outputBytes = outputText ? Buffer.byteLength(outputText) : undefined;
+      const metadata = output?.metadata;
+      const isError = metadata?.error || metadata?.status === "error";
+      try {
+        await postJson("/v1/events", {
+          type: isError ? "orchestra.skill.load.failed" : "orchestra.skill.load.completed",
+          data: {
+            sessionId: input.sessionID,
+            callId: input.callID,
+            skillName,
+            workerId,
+            source: "server",
+            timestamp: Date.now(),
+            durationMs,
+            outputBytes,
+            metadata,
+          },
+        });
+      } catch {
+        // ignore bridge failures
+      }
+    },
+    "permission.ask": async (input, output) => {
+      if (input.type !== "skill") return;
+      const { workerId } = getBridgeConfig();
+      if (!workerId) return;
+      const skillName =
+        input.metadata?.name || input.metadata?.skill || input.metadata?.skillName;
+      try {
+        await postJson("/v1/events", {
+          type: "orchestra.skill.permission",
+          data: {
+            sessionId: input.sessionID,
+            permissionId: input.id,
+            callId: input.callID,
+            status: output.status,
+            pattern: input.pattern,
+            skillName,
+            workerId,
+            source: "server",
+            timestamp: Date.now(),
+          },
+        });
+      } catch {
+        // ignore bridge failures
+      }
     },
   };
 };

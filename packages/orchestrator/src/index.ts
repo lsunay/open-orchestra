@@ -31,6 +31,14 @@ import { loadPromptFile } from "./prompts/load";
 import { createOrchestratorContext } from "./context/orchestrator-context";
 import { createWorkflowTriggers } from "./workflows/triggers";
 import { startEventPublisher } from "./ux/event-publisher";
+import {
+  buildSkillCompletedPayload,
+  buildSkillPermissionPayload,
+  buildSkillRequestedPayload,
+  getSkillNameFromArgs,
+} from "./skills/events";
+import { getWorkflowContextForSession } from "./skills/context";
+import { publishOrchestratorEvent } from "./core/orchestrator-events";
 
 export const OrchestratorPlugin: Plugin = async (ctx) => {
   // CRITICAL: Prevent recursive spawning - if this is a worker process, skip orchestrator initialization
@@ -182,9 +190,88 @@ export const OrchestratorPlugin: Plugin = async (ctx) => {
     }
   };
   const orchestratorAgentName = config.agent?.name ?? "orchestrator";
+  const skillCalls = new Map<string, { startedAt: number; args?: unknown }>();
+
+  const resolveSkillContext = (sessionId: string) => {
+    const workerIds = workerPool.getWorkersForSession(sessionId);
+    const workerId =
+      workerIds.find((id) => workerPool.get(id)?.sessionId === sessionId) ??
+      undefined;
+    const worker = workerId ? workerPool.get(workerId) : undefined;
+    const workflowContext = getWorkflowContextForSession(sessionId);
+    return {
+      workerId,
+      workerKind: worker?.kind ?? worker?.profile.kind,
+      workflowRunId: workflowContext?.runId,
+      workflowStepId: workflowContext?.stepId,
+      source: "in-process" as const,
+    };
+  };
 
   return {
     tool: coreOrchestratorTools,
+    "tool.execute.before": async (input, output) => {
+      if (input.tool !== "skill") return;
+      const startedAt = Date.now();
+      const args = output.args;
+      skillCalls.set(input.callID, { startedAt, args });
+
+      const ctx = resolveSkillContext(input.sessionID);
+      const payload = buildSkillRequestedPayload({
+        sessionId: input.sessionID,
+        callId: input.callID,
+        args,
+        context: ctx,
+        timestamp: startedAt,
+      });
+      publishOrchestratorEvent("orchestra.skill.load.started", payload);
+    },
+    "tool.execute.after": async (input, output) => {
+      if (input.tool !== "skill") return;
+      const entry = skillCalls.get(input.callID);
+      const startedAt = entry?.startedAt;
+      const durationMs = startedAt ? Date.now() - startedAt : undefined;
+      const args = entry?.args;
+      skillCalls.delete(input.callID);
+
+      const ctx = resolveSkillContext(input.sessionID);
+      const isError =
+        (output?.metadata && typeof output.metadata === "object" && (output.metadata as any).error) ||
+        (output?.metadata && typeof output.metadata === "object" && (output.metadata as any).status === "error");
+      const payload = buildSkillCompletedPayload({
+        sessionId: input.sessionID,
+        callId: input.callID,
+        args,
+        status: isError ? "error" : "success",
+        durationMs,
+        output: output?.output,
+        metadata: output?.metadata,
+        context: ctx,
+        timestamp: Date.now(),
+      });
+      publishOrchestratorEvent(isError ? "orchestra.skill.load.failed" : "orchestra.skill.load.completed", payload);
+    },
+    "permission.ask": async (input, output) => {
+      if (input.type !== "skill") return;
+      const ctx = resolveSkillContext(input.sessionID);
+      const metadata = input.metadata as Record<string, unknown> | undefined;
+      const skillName =
+        (metadata && typeof metadata.name === "string" && metadata.name) ||
+        (metadata && typeof metadata.skill === "string" && metadata.skill) ||
+        (metadata && typeof metadata.skillName === "string" && metadata.skillName) ||
+        (input.callID ? getSkillNameFromArgs(skillCalls.get(input.callID)?.args) : undefined);
+      const payload = buildSkillPermissionPayload({
+        sessionId: input.sessionID,
+        permissionId: input.id,
+        callId: input.callID,
+        status: output.status,
+        pattern: input.pattern,
+        skillName: skillName,
+        context: ctx,
+        timestamp: Date.now(),
+      });
+      publishOrchestratorEvent("orchestra.skill.permission", payload);
+    },
     config: async (opencodeConfig: Config) => {
       const providersFromConfig = (): Array<{ id: string; models?: Record<string, unknown> }> => {
         const out: Array<{ id: string; models?: Record<string, unknown> }> = [];
@@ -277,6 +364,10 @@ export const OrchestratorPlugin: Plugin = async (ctx) => {
           [`${prefix}status`]: {
             description: "Show orchestrator status (workers, profiles, config)",
             template: "Call orchestrator_status({ format: 'markdown' }).",
+          },
+          [`${prefix}dashboard`]: {
+            description: "Show a compact worker dashboard (status + warnings)",
+            template: "Call orchestrator_dashboard({ format: 'markdown' }).",
           },
           [`${prefix}output`]: {
             description: "Show unified orchestrator output (jobs + logs)",

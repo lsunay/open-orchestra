@@ -14,6 +14,7 @@ import { createMemoryAgentTools } from "../memory/tools";
 import { createUxTools } from "./ux";
 import { createDiagnosticsTools } from "./diagnostics";
 import { createWorkflowTools } from "./workflows";
+import { createSkillTools } from "./skills";
 
 export {
   setClient,
@@ -69,7 +70,7 @@ export {
   setPassthroughMode,
 } from "./ux";
 export { orchestratorDiagnostics } from "./diagnostics";
-export { listWorkflowsTool, runWorkflowTool } from "./workflows";
+export { continueWorkflowTool, listWorkflowsTool, runWorkflowTool } from "./workflows";
 
 function buildToolSets(context: OrchestratorContext) {
   const workerTools = createWorkerTools(context);
@@ -79,6 +80,7 @@ function buildToolSets(context: OrchestratorContext) {
   const uxTools = createUxTools(context);
   const diagnosticsTools = createDiagnosticsTools(context);
   const workflowTools = createWorkflowTools(context);
+  const skillTools = createSkillTools(context);
 
   const core: Record<string, ToolDefinition> = {
     // Core worker lifecycle + messaging
@@ -95,9 +97,12 @@ function buildToolSets(context: OrchestratorContext) {
     list_profiles: profileTools.listProfiles,
     list_workers: workerTools.listWorkers,
     list_models: profileTools.listModels,
+    list_skills: skillTools.listSkillsTool,
+    validate_skills: skillTools.validateSkillsTool,
     orchestrator_status: profileTools.orchestratorConfig,
     list_workflows: workflowTools.listWorkflowsTool,
     run_workflow: workflowTools.runWorkflowTool,
+    continue_workflow: workflowTools.continueWorkflowTool,
 
     // Memory agent workflow tools
     orchestrator_memory_put: memoryAgentTools.memoryPut,

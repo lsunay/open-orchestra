@@ -30,7 +30,7 @@ const extractText = (parts: TextPart[] | undefined): string => {
 };
 
 export const WorkflowsPage: Component = () => {
-  const { client, workflowRuns, sessions } = useOpenCode();
+  const { client, workflowRuns, sessions, skillEvents } = useOpenCode();
   const { selectedWorkerId } = useLayout();
 
   const [selectedSessionId, setSelectedSessionId] = createSignal<string | null>(null);
@@ -51,6 +51,35 @@ export const WorkflowsPage: Component = () => {
       .sort((a, b) => b.startedAt - a.startedAt),
   );
   const activeRuns = createMemo(() => sortedRuns().filter((run) => run.status === "running"));
+  const skillsByRun = createMemo(() => {
+    const map = new Map<string, string[]>();
+    for (const event of skillEvents()) {
+      if (!event.workflowRunId || !event.skillName) continue;
+      const existing = map.get(event.workflowRunId) ?? [];
+      if (!existing.includes(event.skillName)) {
+        existing.push(event.skillName);
+        map.set(event.workflowRunId, existing);
+      }
+    }
+    return map;
+  });
+  const skillsByStep = createMemo(() => {
+    const map = new Map<string, Map<string, string[]>>();
+    for (const event of skillEvents()) {
+      if (!event.workflowRunId || !event.workflowStepId || !event.skillName) continue;
+      let runMap = map.get(event.workflowRunId);
+      if (!runMap) {
+        runMap = new Map<string, string[]>();
+        map.set(event.workflowRunId, runMap);
+      }
+      const list = runMap.get(event.workflowStepId) ?? [];
+      if (!list.includes(event.skillName)) {
+        list.push(event.skillName);
+        runMap.set(event.workflowStepId, list);
+      }
+    }
+    return map;
+  });
 
   createEffect(() => {
     const preferred = selectedWorkerId();
@@ -269,6 +298,16 @@ export const WorkflowsPage: Component = () => {
                         <div class="mt-2 text-xs text-muted-foreground">
                           {run.steps.length} steps · Run {run.runId.slice(0, 8)}
                         </div>
+                        <Show when={(skillsByRun().get(run.runId) ?? []).length > 0}>
+                          <div class="mt-2 flex flex-wrap gap-2">
+                            <For each={(skillsByRun().get(run.runId) ?? []).slice(0, 4)}>
+                              {(skill) => <Badge variant="secondary">{skill}</Badge>}
+                            </For>
+                            <Show when={(skillsByRun().get(run.runId) ?? []).length > 4}>
+                              <Badge variant="outline">+{(skillsByRun().get(run.runId) ?? []).length - 4}</Badge>
+                            </Show>
+                          </div>
+                        </Show>
                       </div>
                     )}
                   </For>
@@ -294,6 +333,16 @@ export const WorkflowsPage: Component = () => {
                           <div class="text-xs text-muted-foreground">
                             {formatRelativeTime(run.startedAt)} · {run.steps.length} steps
                           </div>
+                          <Show when={(skillsByRun().get(run.runId) ?? []).length > 0}>
+                            <div class="mt-2 flex flex-wrap gap-2">
+                              <For each={(skillsByRun().get(run.runId) ?? []).slice(0, 3)}>
+                                {(skill) => <Badge variant="secondary">{skill}</Badge>}
+                              </For>
+                              <Show when={(skillsByRun().get(run.runId) ?? []).length > 3}>
+                                <Badge variant="outline">+{(skillsByRun().get(run.runId) ?? []).length - 3}</Badge>
+                              </Show>
+                            </div>
+                          </Show>
                         </div>
                         <Badge
                           variant={run.status === "error" ? "error" : run.status === "running" ? "busy" : "ready"}
@@ -338,7 +387,25 @@ export const WorkflowsPage: Component = () => {
                         <For each={run.steps.slice(0, 4)}>
                           {(step) => (
                             <div class="flex items-center justify-between text-xs">
-                              <span class="text-muted-foreground">{step.stepTitle ?? step.stepId}</span>
+                              <div class="min-w-0">
+                                <div class="text-muted-foreground">{step.stepTitle ?? step.stepId}</div>
+                                <Show when={(skillsByStep().get(run.runId)?.get(step.stepId) ?? []).length > 0}>
+                                  <div class="mt-1 flex flex-wrap gap-1">
+                                    <For each={(skillsByStep().get(run.runId)?.get(step.stepId) ?? []).slice(0, 3)}>
+                                      {(skill) => (
+                                        <span class="rounded-full bg-secondary/70 px-2 py-0.5 text-[10px] text-secondary-foreground">
+                                          {skill}
+                                        </span>
+                                      )}
+                                    </For>
+                                    <Show when={(skillsByStep().get(run.runId)?.get(step.stepId) ?? []).length > 3}>
+                                      <span class="rounded-full border border-border px-2 py-0.5 text-[10px] text-muted-foreground">
+                                        +{(skillsByStep().get(run.runId)?.get(step.stepId) ?? []).length - 3}
+                                      </span>
+                                    </Show>
+                                  </div>
+                                </Show>
+                              </div>
                               <span class="text-foreground">
                                 {step.status === "error" ? "Error" : "Success"} · {formatDuration(step.durationMs)}
                               </span>

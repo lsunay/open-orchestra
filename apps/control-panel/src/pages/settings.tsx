@@ -7,6 +7,7 @@ import { useDb } from "@/context/db";
 import { useAgents } from "@/context/agents";
 import { SettingsOverridesCard } from "./settings-overrides-card";
 import { SettingsPreferencesCard } from "./settings-preferences-card";
+import { SettingsConnectionsCard } from "./settings-connections-card";
 import { SettingsSidebar } from "./settings-sidebar";
 import { SettingsSqliteCard } from "./settings-sqlite-card";
 
@@ -64,6 +65,7 @@ export const SettingsPage: Component = () => {
         <div class="flex-1 overflow-auto p-6">
           <div class="max-w-4xl space-y-6 animate-fade-in">
             <SettingsSqliteCard dbPath={dbPath()} user={user()} onMarkOnboarded={markOnboarded} />
+            <SettingsConnectionsCard />
             <SettingsPreferencesCard preferences={preferences()} onSave={setPreference} onDelete={deletePreference} />
             <SettingsOverridesCard
               agent={selectedAgent()}

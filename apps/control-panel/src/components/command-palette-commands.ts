@@ -82,6 +82,14 @@ export const buildCommandList = (deps: CommandDeps): Command[] => {
       category: "navigation",
       action: () => navigateTo("/chat"),
     },
+    {
+      id: "nav-skills",
+      title: "Go to Skills",
+      description: "Inspect OpenCode skills and runtime load data",
+      icon: ListIcon,
+      category: "navigation",
+      action: () => navigateTo("/skills"),
+    },
 
     // Worker commands
     {

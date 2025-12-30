@@ -176,6 +176,100 @@ Memory write or link created.
 }
 ```
 
+### `orchestra.skill.load.started`
+
+Skill load attempt started (tool `skill`).
+
+```json
+{
+  "version": 1,
+  "id": "evt_...",
+  "type": "orchestra.skill.load.started",
+  "timestamp": 1730000000000,
+  "data": {
+    "sessionId": "...",
+    "callId": "...",
+    "skillName": "docs-research",
+    "worker": { "id": "docs", "kind": "subagent" },
+    "workflow": { "runId": "run-...", "stepId": "step-..." },
+    "source": "in-process",
+    "timestamp": 1730000000000
+  }
+}
+```
+
+### `orchestra.skill.load.completed`
+
+Skill load completed successfully.
+
+```json
+{
+  "version": 1,
+  "id": "evt_...",
+  "type": "orchestra.skill.load.completed",
+  "timestamp": 1730000000000,
+  "data": {
+    "sessionId": "...",
+    "callId": "...",
+    "skillName": "docs-research",
+    "worker": { "id": "docs", "kind": "subagent" },
+    "workflow": { "runId": "run-...", "stepId": "step-..." },
+    "source": "in-process",
+    "timestamp": 1730000000000,
+    "durationMs": 1200,
+    "outputBytes": 512
+  }
+}
+```
+
+### `orchestra.skill.load.failed`
+
+Skill load failed (best-effort detection).
+
+```json
+{
+  "version": 1,
+  "id": "evt_...",
+  "type": "orchestra.skill.load.failed",
+  "timestamp": 1730000000000,
+  "data": {
+    "sessionId": "...",
+    "callId": "...",
+    "skillName": "docs-research",
+    "worker": { "id": "docs", "kind": "subagent" },
+    "workflow": { "runId": "run-...", "stepId": "step-..." },
+    "source": "in-process",
+    "timestamp": 1730000000000,
+    "durationMs": 1200,
+    "outputBytes": 128
+  }
+}
+```
+
+### `orchestra.skill.permission`
+
+Permission resolution for a skill tool call.
+
+```json
+{
+  "version": 1,
+  "id": "evt_...",
+  "type": "orchestra.skill.permission",
+  "timestamp": 1730000000000,
+  "data": {
+    "sessionId": "...",
+    "permissionId": "...",
+    "callId": "...",
+    "status": "deny",
+    "pattern": "docs-*",
+    "skillName": "docs-research",
+    "worker": { "id": "docs", "kind": "subagent" },
+    "source": "in-process",
+    "timestamp": 1730000000000
+  }
+}
+```
+
 ### `orchestra.error`
 
 Error event with context.

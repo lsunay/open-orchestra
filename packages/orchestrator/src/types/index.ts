@@ -42,6 +42,8 @@ export interface WorkerProfile {
   temperature?: number;
   /** Optional keywords/tags to improve matching */
   tags?: string[];
+  /** Required OpenCode skills for this worker */
+  requiredSkills?: string[];
   /** Whether to inject repo context on auto-launch (for docs worker) */
   injectRepoContext?: boolean;
 }
@@ -113,6 +115,7 @@ export type WorkflowStepConfig = {
   prompt?: string;
   carry?: boolean;
   timeoutMs?: number;
+  requiredSkills?: string[];
 };
 
 export type WorkflowDefinitionConfig = {

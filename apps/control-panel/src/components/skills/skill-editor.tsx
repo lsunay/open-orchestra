@@ -1,3 +1,4 @@
+import { A } from "@solidjs/router";
 import { createEffect, createMemo, createSignal, Show } from "solid-js";
 import { Button } from "@/components/ui/button";
 import { Input, Textarea } from "@/components/ui/input";
@@ -32,6 +33,13 @@ export function AgentEditor(props: { agentId: string; onClose: () => void }) {
   const [saving, setSaving] = createSignal(false);
   const [deleteOpen, setDeleteOpen] = createSignal(false);
   const [deleteError, setDeleteError] = createSignal<string | null>(null);
+  const skillToolStatus = createMemo(() => {
+    const value = tools().skill;
+    if (value === true) return "enabled";
+    if (value === false) return "disabled";
+    return "inherit (default: enabled)";
+  });
+  const skillOverrides = createMemo(() => Object.entries(permissions().skill ?? {}));
 
   createEffect(() => {
     const current = agent();
@@ -192,6 +200,28 @@ export function AgentEditor(props: { agentId: string; onClose: () => void }) {
                     />
                     Inject Repo Context
                   </label>
+                </div>
+
+                <div class="rounded-md border border-border/60 bg-card/60 p-3 text-xs">
+                  <div class="flex items-center justify-between">
+                    <span class="font-medium text-foreground">Skills access</span>
+                    <A href="/skills" class="text-primary hover:underline">
+                      Open Skills workspace
+                    </A>
+                  </div>
+                  <div class="mt-2 text-muted-foreground">
+                    Skill tool: <span class="text-foreground">{skillToolStatus()}</span>
+                  </div>
+                  <div class="mt-1 text-muted-foreground">
+                    Permission overrides:{" "}
+                    <span class="text-foreground">
+                      {skillOverrides().length > 0
+                        ? skillOverrides()
+                            .map(([pattern, value]) => `${pattern}:${value}`)
+                            .join(", ")
+                        : "inherit"}
+                    </span>
+                  </div>
                 </div>
               </div>
             </Show>

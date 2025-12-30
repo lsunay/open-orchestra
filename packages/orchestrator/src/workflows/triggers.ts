@@ -6,19 +6,24 @@ import { extractImages, formatVisionAnalysis, hasImages, replaceImagesWithAnalys
 import { getWorkflow } from "./engine";
 import { resolveWorkflowLimits, runWorkflowWithContext } from "./runner";
 import type { WorkflowRunResult } from "./types";
+import type { WorkflowUiPolicy } from "../types";
+import { injectSessionNotice } from "../ux/wakeup";
 
 type ToastFn = (message: string, variant: "success" | "info" | "warning" | "error") => Promise<void>;
 type WorkflowTriggerOptions = {
   visionTimeoutMs: number;
   processedMessageIds?: Set<string>;
   showToast?: ToastFn;
-  runWorkflow?: (input: {
-    workflowId: string;
-    task: string;
-    attachments?: any[];
-    autoSpawn?: boolean;
-    limits?: ReturnType<typeof resolveWorkflowLimits>;
-  }, options?: { sessionId?: string }) => Promise<WorkflowRunResult>;
+  runWorkflow?: (
+    input: {
+      workflowId: string;
+      task: string;
+      attachments?: any[];
+      autoSpawn?: boolean;
+      limits?: ReturnType<typeof resolveWorkflowLimits>;
+    },
+    options?: { sessionId?: string; uiPolicy?: WorkflowUiPolicy; notify?: boolean }
+  ) => Promise<WorkflowRunResult>;
 };
 
 type TriggerConfig = {
@@ -146,22 +151,6 @@ function buildVisionWakeup(
   ].join("\n");
 }
 
-async function injectOrchestratorNotice(
-  context: OrchestratorContext,
-  sessionId: string,
-  text: string
-): Promise<void> {
-  if (!context.client?.session) return;
-  try {
-    await context.client.session.prompt({
-      path: { id: sessionId },
-      body: { noReply: true, parts: [{ type: "text", text }] as any },
-      query: { directory: context.directory },
-    } as any);
-  } catch {
-    // Ignore injection failures (session may have ended, etc.)
-  }
-}
 
 function pickWorkflowResponse(result: WorkflowRunResult): { success: boolean; response?: string; error?: string } {
   const errorStep = result.steps.find((step) => step.status === "error");
@@ -245,7 +234,7 @@ export function createWorkflowTriggers(context: OrchestratorContext, options: Wo
 
           // Inject wakeup message on error
           const wakeupMessage = buildVisionWakeup(workerId, job.id, false, error);
-          void injectOrchestratorNotice(context, sessionId, wakeupMessage);
+          void injectSessionNotice(context, sessionId, wakeupMessage);
           await showToast(`Vision analysis failed: ${error}`, "warning");
           return;
         }
@@ -261,7 +250,11 @@ export function createWorkflowTriggers(context: OrchestratorContext, options: Wo
             autoSpawn: trigger.autoSpawn,
             limits: { ...limits, perStepTimeoutMs },
           },
-          { sessionId }
+          {
+            sessionId,
+            uiPolicy: { execution: "auto", intervene: "never" },
+            notify: false,
+          }
         );
 
         const picked = pickWorkflowResponse(result);
@@ -281,7 +274,7 @@ export function createWorkflowTriggers(context: OrchestratorContext, options: Wo
         // Inject wakeup message when analysis completes (v0.2.3 behavior)
         const summary = picked.success ? "Vision analysis complete" : (picked.error ?? "Vision analysis failed");
         const wakeupMessage = buildVisionWakeup(workerId, job.id, picked.success, summary);
-        void injectOrchestratorNotice(context, sessionId, wakeupMessage);
+        void injectSessionNotice(context, sessionId, wakeupMessage);
 
         if (!picked.success && picked.error) {
           await showToast(`Vision analysis failed: ${picked.error}`, "warning");
@@ -292,7 +285,7 @@ export function createWorkflowTriggers(context: OrchestratorContext, options: Wo
 
         // Inject wakeup message on crash
         const wakeupMessage = buildVisionWakeup(workerId, job.id, false, msg);
-        void injectOrchestratorNotice(context, sessionId, wakeupMessage);
+        void injectSessionNotice(context, sessionId, wakeupMessage);
         await showToast(`Vision analysis crashed: ${msg}`, "error");
       }
     };
@@ -362,7 +355,11 @@ export function createWorkflowTriggers(context: OrchestratorContext, options: Wo
             autoSpawn: trigger.autoSpawn,
             limits,
           },
-          { sessionId }
+          {
+            sessionId,
+            uiPolicy: { execution: "auto", intervene: "never" },
+            notify: false,
+          }
         );
 
         const picked = pickWorkflowResponse(result);

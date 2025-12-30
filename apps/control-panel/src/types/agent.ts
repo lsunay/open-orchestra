@@ -4,6 +4,9 @@ export type ToolPermissions = {
     execution?: "full" | "sandboxed" | "none";
     network?: "full" | "localhost" | "none";
   };
+  skill?: {
+    [pattern: string]: "allow" | "ask" | "deny";
+  };
   tools?: {
     [toolName: string]: {
       enabled: boolean;

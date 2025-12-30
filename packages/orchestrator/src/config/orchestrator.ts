@@ -61,6 +61,12 @@ export function resolveWorkerEntry(entry: unknown): WorkerProfile | undefined {
     merged.tags = tags;
   }
 
+  if ("requiredSkills" in merged) {
+    const requiredSkills = asStringArray(merged.requiredSkills);
+    if (!requiredSkills) return undefined;
+    merged.requiredSkills = requiredSkills;
+  }
+
   const entryBackend = "backend" in entry ? (entry as any).backend : undefined;
   if (entryBackend !== undefined && entryBackend !== "agent" && entryBackend !== "server") {
     return undefined;

@@ -11,7 +11,36 @@ export type OrchestratorEventType =
   | "orchestra.workflow.step"
   | "orchestra.workflow.completed"
   | "orchestra.memory.written"
+  | "orchestra.skill.load.started"
+  | "orchestra.skill.load.completed"
+  | "orchestra.skill.load.failed"
+  | "orchestra.skill.permission"
   | "orchestra.error";
+
+export type OrchestratorSkillLoadEvent = {
+  sessionId: string;
+  callId: string;
+  skillName?: string;
+  worker?: { id: string; kind?: WorkerKind };
+  workflow?: { runId?: string; stepId?: string };
+  source: "in-process" | "server";
+  timestamp: number;
+  durationMs?: number;
+  outputBytes?: number;
+  metadata?: Record<string, unknown>;
+};
+
+export type OrchestratorSkillPermissionEvent = {
+  sessionId: string;
+  permissionId: string;
+  callId?: string;
+  status: "allow" | "ask" | "deny";
+  pattern?: string | string[];
+  skillName?: string;
+  worker?: { id: string; kind?: WorkerKind };
+  source: "in-process" | "server";
+  timestamp: number;
+};
 
 export type OrchestratorWorkerSnapshot = {
   id: string;
@@ -110,6 +139,10 @@ export type OrchestratorEventDataMap = {
     toKey?: string;
     relation?: string;
   };
+  "orchestra.skill.load.started": OrchestratorSkillLoadEvent;
+  "orchestra.skill.load.completed": OrchestratorSkillLoadEvent;
+  "orchestra.skill.load.failed": OrchestratorSkillLoadEvent;
+  "orchestra.skill.permission": OrchestratorSkillPermissionEvent;
   "orchestra.error": {
     message: string;
     source?: string;

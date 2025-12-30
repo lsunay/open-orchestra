@@ -3,6 +3,8 @@ import type {
   ModelOption,
   OpenCodeEventItem,
   OrchestratorEvent,
+  SkillEventSource,
+  SkillLoadEvent,
   WorkerRuntime,
   WorkerStatus,
   WorkerStreamChunk,
@@ -14,6 +16,8 @@ const asRecord = (value: unknown): value is Record<string, unknown> => typeof va
 
 export const isWorkerStatus = (value: unknown): value is WorkerStatus =>
   value === "starting" || value === "ready" || value === "busy" || value === "error" || value === "stopped";
+
+const isSkillEventSource = (value: unknown): value is SkillEventSource => value === "in-process" || value === "server";
 
 export const buildModelOptions = (providers: Provider[]): ModelOption[] => {
   const byValue = new Map<string, ModelOption>();
@@ -159,6 +163,43 @@ export const extractWorkerStreamChunkFromEvent = (event: OrchestratorEvent): Wor
     chunk: typeof chunk.chunk === "string" ? chunk.chunk : "",
     timestamp: typeof chunk.timestamp === "number" ? chunk.timestamp : Date.now(),
     final: Boolean(chunk.final),
+  };
+};
+
+export const extractSkillLoadEventFromEvent = (event: OrchestratorEvent): SkillLoadEvent | null => {
+  if (
+    event.type !== "orchestra.skill.load.started" &&
+    event.type !== "orchestra.skill.load.completed" &&
+    event.type !== "orchestra.skill.load.failed"
+  ) {
+    return null;
+  }
+  const data = event.data;
+  if (!asRecord(data)) return null;
+  const worker = asRecord(data.worker) ? data.worker : undefined;
+  const workflow = asRecord(data.workflow) ? data.workflow : undefined;
+  const status =
+    event.type === "orchestra.skill.load.failed"
+      ? "error"
+      : event.type === "orchestra.skill.load.completed"
+        ? "success"
+        : undefined;
+
+  return {
+    id: event.id,
+    type: event.type,
+    skillName: typeof data.skillName === "string" ? data.skillName : undefined,
+    sessionId: typeof data.sessionId === "string" ? data.sessionId : undefined,
+    callId: typeof data.callId === "string" ? data.callId : undefined,
+    workerId: typeof worker?.id === "string" ? worker.id : undefined,
+    workerKind: typeof worker?.kind === "string" ? worker.kind : undefined,
+    workflowRunId: typeof workflow?.runId === "string" ? workflow.runId : undefined,
+    workflowStepId: typeof workflow?.stepId === "string" ? workflow.stepId : undefined,
+    source: isSkillEventSource(data.source) ? data.source : undefined,
+    timestamp: event.timestamp,
+    durationMs: typeof data.durationMs === "number" ? data.durationMs : undefined,
+    outputBytes: typeof data.outputBytes === "number" ? data.outputBytes : undefined,
+    status,
   };
 };
 

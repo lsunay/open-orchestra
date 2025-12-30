@@ -9,5 +9,6 @@ export { DashboardPage } from "./dashboard";
 export { MemoryPage } from "./memory";
 export { OnboardingPage } from "./onboarding";
 export { PromptsPage } from "./prompts";
+export { SkillsPage } from "./skills";
 export { SettingsPage } from "./settings";
 export { WorkflowsPage } from "./workflows";

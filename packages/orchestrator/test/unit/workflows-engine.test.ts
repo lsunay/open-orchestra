@@ -66,8 +66,10 @@ describe("workflow engine unit", () => {
     );
 
     expect(result.steps.length).toBe(2);
+    expect(result.status).toBe("success");
     expect(result.steps[0]?.status).toBe("success");
     expect(result.steps[1]?.status).toBe("success");
+    expect(result.currentStepIndex).toBe(2);
     expect(prompts[1]).toContain("### Step One");
     expect(prompts[1]).toContain("STEP_ONE_OK");
     expect(attachmentsSeen[0]).toBeTruthy();
@@ -107,6 +109,7 @@ describe("workflow engine unit", () => {
     );
 
     expect(result.steps.length).toBe(2);
+    expect(result.status).toBe("error");
     expect(result.steps[0]?.status).toBe("success");
     expect(result.steps[1]?.status).toBe("error");
     expect(result.steps[1]?.error).toBe("failed");

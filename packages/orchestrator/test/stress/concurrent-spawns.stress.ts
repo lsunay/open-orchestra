@@ -92,6 +92,9 @@ class MockSpawner {
     if (inFlight) {
       return inFlight;
     }
+
+    // Simulate the async gap in the buggy implementation where concurrent callers can pass the check.
+    await Promise.resolve();
     
     // Create spawn promise - but there's an async gap before this executes
     const spawnPromise = (async () => {

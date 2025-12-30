@@ -71,6 +71,7 @@ export async function spawnAgentWorker(
     if (isSubagent && parentSessionId) {
       instance.parentSessionId = parentSessionId;
     }
+    workerPool.trackOwnership(session.id, resolvedProfile.id);
 
     // Inject bootstrap prompt (worker identity & instructions)
     const bootstrapPrompt = await buildWorkerBootstrapPrompt({

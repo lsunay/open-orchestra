@@ -10,6 +10,7 @@ const TOOLS = [
   { id: "glob", label: "File Search", description: "Search for files by pattern" },
   { id: "grep", label: "Content Search", description: "Search file contents" },
   { id: "web", label: "Web Access", description: "Fetch web content" },
+  { id: "skill", label: "Skill Loader", description: "Load OpenCode skills" },
 ];
 
 export function ToolsConfig(props: { value: Record<string, boolean>; onChange: (v: Record<string, boolean>) => void }) {

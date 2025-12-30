@@ -7,6 +7,7 @@ import {
   buildModelOptions,
   createEventItem,
   extractMessagesAndParts,
+  extractSkillLoadEventFromEvent,
   extractWorkerSnapshotFromEvent,
   extractProvidersPayload,
   extractToolIdsPayload,
@@ -314,6 +315,14 @@ export function createOpenCodeActions({ client, state, setState }: ActionDeps) {
     if (worker) upsertWorker(worker);
     handleWorkerStream(extractWorkerStreamChunkFromEvent(event));
     updateWorkflowRunFromEvent(event);
+    const skillEvent = extractSkillLoadEventFromEvent(event);
+    if (skillEvent) {
+      setState(
+        produce((s) => {
+          s.skillEvents = [skillEvent, ...(s.skillEvents ?? [])].slice(0, 200);
+        }),
+      );
+    }
   };
   const createSession = async (): Promise<Session | null> => {
     try {
@@ -430,6 +439,7 @@ export function createOpenCodeActions({ client, state, setState }: ActionDeps) {
           s.workers = {};
           s.workerStreams = {};
           s.workflowRuns = {};
+          s.skillEvents = [];
           s.lastUpdate = Date.now();
         }),
       );
