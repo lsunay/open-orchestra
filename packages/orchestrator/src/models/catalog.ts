@@ -311,3 +311,12 @@ export async function fetchProviders(client: any, directory: string): Promise<{ 
   const res = await client.config.providers({ query: { directory } });
   return { providers: (res.data as any)?.providers ?? [], defaults: (res.data as any)?.default ?? {} };
 }
+
+export async function fetchModelInfo(
+  client: any,
+  directory: string,
+  modelId: string
+): Promise<{ capabilities?: Model["capabilities"] } | undefined> {
+  const res = await client.config.model?.({ query: { directory, model: modelId } }).catch(() => undefined);
+  return res?.data as { capabilities?: Model["capabilities"] } | undefined;
+}

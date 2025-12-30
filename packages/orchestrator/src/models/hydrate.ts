@@ -1,5 +1,6 @@
 import type { WorkerProfile } from "../types";
 import {
+  fetchModelInfo,
   fetchOpencodeConfig,
   fetchProviders,
   flattenProviders,
@@ -112,7 +113,14 @@ export async function hydrateProfileModelsFromOpencode(input: {
       const parsed = parseFullModelID(desired);
       const provider = providersAll.find((p) => p.id === parsed.providerID);
       const model = provider?.models?.[parsed.modelID] as any;
-      const caps = model?.capabilities as any | undefined;
+      let caps = model?.capabilities as any | undefined;
+
+      // If capabilities not in provider list, fetch from SDK
+      if (!caps) {
+        const modelInfo = await fetchModelInfo(input.client, input.directory, desired);
+        caps = modelInfo?.capabilities;
+      }
+
       if (caps) {
         const visionCapable = Boolean(caps?.attachment || caps?.input?.image);
         if (!visionCapable) {
@@ -121,6 +129,11 @@ export async function hydrateProfileModelsFromOpencode(input: {
               `Choose a model with image input support.`
           );
         }
+      } else {
+        console.warn(
+          `[hydrate] No capability metadata for "${desired}" - ` +
+            `trusting profile "${profile.id}" supportsVision flag`
+        );
       }
     }
 

@@ -2,6 +2,7 @@ import type { WorkerInstance, WorkerProfile } from "../../types";
 import { workerPool } from "../../core/worker-pool";
 import { publishErrorEvent } from "../../core/orchestrator-events";
 import { sendWorkerPrompt, type SendToWorkerOptions } from "../send";
+import { buildWorkerBootstrapPrompt } from "../prompt/worker-prompt";
 
 function getBackendClient(instance: WorkerInstance, fallback?: any) {
   return instance.client ?? fallback;
@@ -32,6 +33,42 @@ export async function spawnAgentWorker(
     }
 
     instance.client = spawnOptions.client;
+
+    // Create a dedicated session for this worker
+    const sessionResult = await spawnOptions.client.session.create({
+      body: { title: `Worker: ${resolvedProfile.name}` },
+      query: { directory: spawnOptions.directory },
+    });
+
+    const session = sessionResult.data;
+    if (!session) {
+      const err = sessionResult.error as any;
+      const msg = err?.message ?? err?.toString?.() ?? "Failed to create session";
+      instance.status = "error";
+      instance.error = msg;
+      workerPool.updateStatus(resolvedProfile.id, "error", msg);
+      throw new Error(msg);
+    }
+
+    instance.sessionId = session.id;
+
+    // Inject bootstrap prompt (worker identity & instructions)
+    const bootstrapPrompt = await buildWorkerBootstrapPrompt({
+      profile: resolvedProfile,
+      directory: spawnOptions.directory,
+    });
+
+    await spawnOptions.client.session
+      .prompt({
+        path: { id: session.id },
+        body: {
+          noReply: true,
+          parts: [{ type: "text", text: bootstrapPrompt }],
+        },
+        query: { directory: spawnOptions.directory },
+      } as any)
+      .catch(() => {});
+
     instance.status = "ready";
     instance.lastActivity = new Date();
     workerPool.updateStatus(resolvedProfile.id, "ready");
@@ -71,7 +108,9 @@ export async function sendToAgentWorker(
     return { success: false, error: `Worker "${workerId}" missing OpenCode client` };
   }
 
-  const sessionId = options?.sessionId ?? instance.sessionId;
+  // Always use the worker's own session, not the caller's session
+  // The caller's sessionId (options.sessionId) is for ownership tracking, not routing
+  const sessionId = instance.sessionId;
   if (!sessionId) {
     publishErrorEvent({
       message: `Worker "${workerId}" missing sessionId for agent backend`,
@@ -97,7 +136,6 @@ export async function sendToAgentWorker(
       jobId: options?.jobId,
       from: options?.from,
       allowStreaming: false,
-      agent: workerId,
       debugLabel: "[agent-backend]",
     });
 
@@ -105,7 +143,6 @@ export async function sendToAgentWorker(
     instance.lastActivity = new Date();
     instance.currentTask = undefined;
     instance.warning = undefined;
-    instance.sessionId = sessionId;
 
     const durationMs = Date.now() - startedAt;
     instance.lastResult = {

@@ -150,24 +150,8 @@ export const OrchestratorPlugin: Plugin = async (ctx) => {
     showToast,
   });
 
-  const isImagePart = (part: any): boolean => {
-    if (!part || typeof part !== "object") return false;
-    if (part.type === "image") return true;
-    if (part.type === "file" && typeof part.mime === "string" && part.mime.startsWith("image/")) return true;
-    if (part.type === "file" && typeof part.url === "string" && part.url.startsWith("data:image/")) return true;
-    if (typeof part.url === "string" && (part.url === "clipboard" || part.url.startsWith("clipboard:"))) return true;
-    return false;
-  };
-
-  const stripImageParts = (parts: any[]): { parts: any[]; stripped: boolean } => {
-    if (!Array.isArray(parts)) return { parts, stripped: false };
-    const withoutImages = parts.filter((p) => !isImagePart(p));
-    if (withoutImages.length === parts.length) return { parts, stripped: false };
-    const hasText = withoutImages.some((p) => p?.type === "text" && typeof p.text === "string" && p.text.trim().length > 0);
-    if (hasText || withoutImages.length > 0) return { parts: withoutImages, stripped: true };
-    return { parts: [{ type: "text", text: "[Image received]" }], stripped: true };
-  };
-
+  // visionMessageTransform: Only used to mark already-processed history messages.
+  // It does NOT strip images or trigger analysis - that's handled in chat.message hook.
   const visionMessageTransform = async (
     _input: Record<string, unknown>,
     output: { messages: Array<{ info: any; parts: any[] }> }
@@ -181,20 +165,10 @@ export const OrchestratorPlugin: Plugin = async (ctx) => {
       const parts = Array.isArray(msg?.parts) ? msg.parts : [];
       if (!hasImages(parts)) continue;
 
-      const agentId = typeof info?.agent === "string" ? info.agent : undefined;
-      const agentProfile = agentId ? (config.profiles as any)?.[agentId] : undefined;
-      const agentSupportsVision = Boolean(agentProfile?.supportsVision) || agentId === "vision";
-      if (!agentSupportsVision) {
-        const stripped = stripImageParts(parts);
-        if (stripped.stripped) {
-          msg.parts = stripped.parts;
-        }
-      } else {
-        break;
-      }
-
+      // Skip if already processed
       if (messageId && visionProcessedMessageIds.has(messageId)) break;
 
+      // Check if analysis was already injected (from previous session restore, etc.)
       const alreadyInjected = parts.some(
         (p: any) => p?.type === "text" && typeof p.text === "string" && p.text.includes("[VISION ANALYSIS")
       );
@@ -203,8 +177,7 @@ export const OrchestratorPlugin: Plugin = async (ctx) => {
         break;
       }
 
-      // IMPORTANT: This hook should not trigger new vision analysis.
-      // It only marks already-processed history messages (those with [VISION ANALYSIS] injected).
+      // Do NOT strip images here - the chat.message hook handles that via triggers.handleVisionMessage
       break;
     }
   };

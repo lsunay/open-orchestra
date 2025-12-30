@@ -2,7 +2,7 @@ import type { OrchestratorContext } from "../context/orchestrator-context";
 import { workerJobs } from "../core/jobs";
 import { normalizeForMemory } from "../memory/text";
 import { createMemoryTask, failMemoryTask, isMemoryTaskPending } from "../memory/tasks";
-import { extractImages, formatVisionAnalysis, hasImages } from "../vision/analyzer";
+import { extractImages, formatVisionAnalysis, hasImages, replaceImagesWithAnalysis } from "../vision/analyzer";
 import { getWorkflow } from "./engine";
 import { resolveWorkflowLimits, runWorkflowWithContext } from "./runner";
 import type { WorkflowRunResult } from "./types";
@@ -59,34 +59,6 @@ function extractTextFromMessage(msg: any): string {
   return extractTextFromParts(parts);
 }
 
-function extractPartsFromMessage(msg: any, fallback?: any[]): any[] {
-  if (!msg) return Array.isArray(fallback) ? fallback : [];
-  if (Array.isArray(msg.parts)) return msg.parts;
-  if (Array.isArray(msg.content?.parts)) return msg.content.parts;
-  return Array.isArray(fallback) ? fallback : [];
-}
-
-function appendAnalysisText(parts: any[], analysisText: string, meta?: { sessionID?: string; messageID?: string }): any[] {
-  if (!Array.isArray(parts)) return parts;
-  const next = [...parts];
-  for (let i = next.length - 1; i >= 0; i -= 1) {
-    const p = next[i];
-    if (p?.type === "text" && typeof p.text === "string") {
-      p.text += `\n\n${analysisText}\n`;
-      return next;
-    }
-  }
-  next.push({
-    type: "text",
-    text: analysisText,
-    id: `${meta?.messageID ?? "msg"}-vision-analysis`,
-    sessionID: meta?.sessionID ?? "",
-    messageID: meta?.messageID ?? "",
-    synthetic: true,
-  });
-  return next;
-}
-
 function extractSectionItems(text: string, headings: string[], limit = 6): string[] {
   const lines = text.split(/\r?\n/);
   const normalizedHeadings = headings.map((h) => h.toLowerCase());
@@ -133,6 +105,47 @@ function selectWorkflowWorker(context: OrchestratorContext, workflowId: string, 
   return workflow?.steps[0]?.workerId ?? fallback;
 }
 
+function buildVisionPlaceholder(
+  workerName: string,
+  workerModel: string,
+  jobId: string
+): string {
+  const workerInfo = `${workerName} (${workerModel})`;
+  const awaitCall = `await_worker_job({ jobId: "${jobId}" })`;
+  const boxWidth = Math.max(60, workerInfo.length + 12, jobId.length + 12, awaitCall.length + 4);
+  const hr = "─".repeat(boxWidth - 2);
+  const pad = (s: string) => s.padEnd(boxWidth - 4);
+
+  return [
+    `┌${hr}┐`,
+    `│ 🖼  [VISION ANALYSIS PENDING]${" ".repeat(boxWidth - 34)}│`,
+    `├${hr}┤`,
+    `│ Worker: ${pad(workerInfo)}│`,
+    `│ Job ID: ${pad(jobId)}│`,
+    `├${hr}┤`,
+    `│ ${pad("⏳ Analyzing image content...")}│`,
+    `│ ${pad(awaitCall)}│`,
+    `└${hr}┘`,
+  ].join("\n");
+}
+
+async function injectOrchestratorNotice(
+  context: OrchestratorContext,
+  sessionId: string,
+  text: string
+): Promise<void> {
+  if (!context.client?.session) return;
+  try {
+    await context.client.session.prompt({
+      path: { id: sessionId },
+      body: { noReply: true, parts: [{ type: "text", text }] as any },
+      query: { directory: context.directory },
+    } as any);
+  } catch {
+    // Ignore injection failures (session may have ended, etc.)
+  }
+}
+
 function pickWorkflowResponse(result: WorkflowRunResult): { success: boolean; response?: string; error?: string } {
   const errorStep = result.steps.find((step) => step.status === "error");
   if (errorStep) {
@@ -158,8 +171,10 @@ export function createWorkflowTriggers(context: OrchestratorContext, options: Wo
     const trigger = resolveTriggerConfig(context.workflows?.triggers?.visionOnImage, visionDefaults);
     if (!trigger.enabled) return;
 
-    const outputParts = Array.isArray(output.parts) ? output.parts : [];
-    const originalParts = extractPartsFromMessage(input, outputParts);
+    // CRITICAL: Use output.parts directly (like v0.2.3), NOT input.parts.
+    // output.parts is what gets sent to the model - modifying it removes images from the prompt.
+    // Using input.parts would extract from the wrong source and our modifications wouldn't take effect.
+    const originalParts = Array.isArray(output.parts) ? output.parts : [];
     if (!hasImages(originalParts)) return;
 
     const messageId = typeof input.messageID === "string" ? input.messageID : undefined;
@@ -172,7 +187,7 @@ export function createWorkflowTriggers(context: OrchestratorContext, options: Wo
     const agentSupportsVision = Boolean(agentProfile?.supportsVision) || agentId === "vision";
     if (agentSupportsVision) return;
 
-    const alreadyInjected = outputParts.some(
+    const alreadyInjected = originalParts.some(
       (p: any) => p?.type === "text" && typeof p.text === "string" && p.text.includes("[VISION ANALYSIS")
     );
     if (alreadyInjected) {
@@ -194,12 +209,30 @@ export function createWorkflowTriggers(context: OrchestratorContext, options: Wo
     });
     if (messageId) processedMessageIds.add(messageId);
 
+    // Inject placeholder immediately (like v0.2.3) so orchestrator can await the job
+    const workerName = workerProfile?.name ?? "Vision Worker";
+    const workerModel = workerProfile?.model ?? "vision model";
+    const placeholder = buildVisionPlaceholder(workerName, workerModel, job.id);
+
+    output.parts = replaceImagesWithAnalysis(originalParts, placeholder, {
+      sessionID: sessionId,
+      messageID: messageId,
+    });
+
     const run = async () => {
       try {
         const attachments = await extractImages(originalParts);
         if (attachments.length === 0) {
           const error = "No valid image attachments found";
           workerJobs.setError(job.id, { error });
+
+          // Inject wakeup message on error
+          const wakeupMessage =
+            `<orchestrator-internal kind="wakeup" workerId="${workerId}" reason="error" jobId="${job.id}">\n` +
+            `[VISION ANALYSIS] ${error} (jobId: ${job.id}).\n` +
+            `Check await_worker_job({ jobId: "${job.id}" }) for details.\n` +
+            `</orchestrator-internal>`;
+          void injectOrchestratorNotice(context, sessionId, wakeupMessage);
           await showToast(`Vision analysis failed: ${error}`, "warning");
           return;
         }
@@ -232,13 +265,15 @@ export function createWorkflowTriggers(context: OrchestratorContext, options: Wo
           workerJobs.setError(job.id, { error: picked.error ?? "Vision analysis failed" });
         }
 
-        if (trigger.blocking && analysisText) {
-          output.parts = appendAnalysisText(outputParts, analysisText, {
-            sessionID: sessionId,
-            messageID: input.messageID,
-          });
-          if (messageId) processedMessageIds.add(messageId);
-        }
+        // Inject wakeup message when analysis completes (v0.2.3 behavior)
+        const reason = picked.success ? "result_ready" : "error";
+        const summary = picked.success ? "vision analysis complete" : (picked.error ?? "vision analysis failed");
+        const wakeupMessage =
+          `<orchestrator-internal kind="wakeup" workerId="${workerId}" reason="${reason}" jobId="${job.id}">\n` +
+          `[VISION ANALYSIS] ${summary} (jobId: ${job.id}).\n` +
+          `Check await_worker_job({ jobId: "${job.id}" }) for details.\n` +
+          `</orchestrator-internal>`;
+        void injectOrchestratorNotice(context, sessionId, wakeupMessage);
 
         if (!picked.success && picked.error) {
           await showToast(`Vision analysis failed: ${picked.error}`, "warning");
@@ -246,15 +281,20 @@ export function createWorkflowTriggers(context: OrchestratorContext, options: Wo
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         workerJobs.setError(job.id, { error: msg });
+
+        // Inject wakeup message on crash
+        const wakeupMessage =
+          `<orchestrator-internal kind="wakeup" workerId="${workerId}" reason="error" jobId="${job.id}">\n` +
+          `[VISION ANALYSIS] ${msg} (jobId: ${job.id}).\n` +
+          `Check await_worker_job({ jobId: "${job.id}" }) for details.\n` +
+          `</orchestrator-internal>`;
+        void injectOrchestratorNotice(context, sessionId, wakeupMessage);
         await showToast(`Vision analysis crashed: ${msg}`, "error");
       }
     };
 
-    if (trigger.blocking) {
-      await run();
-    } else {
-      void run();
-    }
+    // Always run non-blocking - placeholder is injected synchronously above
+    void run();
   };
 
   const handleMemoryTurnEnd = async (input: any, _output: any): Promise<void> => {

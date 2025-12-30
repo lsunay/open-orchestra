@@ -9,10 +9,12 @@ import type { WorkerProfile } from "../types";
  */
 export const builtInProfiles: Record<string, WorkerProfile> = {
   // Vision specialist - for analyzing images, diagrams, screenshots
+  // NOTE: Vision workers MUST use backend: "server" because the model is specified at spawn time.
+  // The agent backend shares the orchestrator's model which may not support vision.
   vision: {
     id: "vision",
     name: "Vision Analyst",
-    backend: "agent",
+    backend: "server",
     model: "zhipuai-coding-plan/glm-4.6v",
     purpose: "Analyze images, screenshots, diagrams, and visual content",
     whenToUse:
