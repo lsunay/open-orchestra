@@ -155,7 +155,7 @@ Available workers depend on what's been spawned. Common workers:
 
   const askWorkerAsync: ToolDefinition = tool({
     description:
-      "Start a worker task asynchronously. Returns a jobId you can poll or await later with await_worker_job / get_worker_job.",
+      "LEGACY: Start a worker task asynchronously. Prefer task_start + task_await / task_peek for a simpler async API.",
     args: {
       workerId: tool.schema.string().describe("ID of the worker to message (e.g., 'vision', 'docs', 'coder')"),
       message: tool.schema.string().describe("The message/question to send to the worker"),
@@ -200,7 +200,7 @@ Available workers depend on what's been spawned. Common workers:
   });
 
   const getWorkerJob: ToolDefinition = tool({
-    description: "Get the status/result of a worker job started with ask_worker_async.",
+    description: "LEGACY: Get the status/result of a worker job started with ask_worker_async. Prefer task_peek.",
     args: {
       jobId: tool.schema.string().describe("Job id from ask_worker_async"),
       format: tool.schema.enum(["markdown", "json"]).optional().describe("Output format (default: json)"),
@@ -225,7 +225,7 @@ Available workers depend on what's been spawned. Common workers:
   });
 
   const awaitWorkerJob: ToolDefinition = tool({
-    description: "Wait for an async worker job to finish (succeeds or fails) and return its final record.",
+    description: "LEGACY: Wait for an async worker job to finish and return its final record. Prefer task_await.",
     args: {
       jobId: tool.schema.string().describe("Job id from ask_worker_async"),
       timeoutMs: tool.schema.number().optional().describe("Timeout in ms (default: 10 minutes)"),

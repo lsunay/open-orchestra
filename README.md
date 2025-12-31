@@ -82,7 +82,7 @@ Before installing Open Orchestra, verify you have:
 |-------------|---------------|----------|
 | Bun runtime | `bun --version` | 1.0.0 or higher |
 | OpenCode CLI | `opencode --version` | Any recent version |
-| AI Provider | `list_models` (in OpenCode) | At least one model listed |
+| AI Provider | `orchestrator.models` (in OpenCode) | At least one model listed |
 
 **Quick verification:**
 
@@ -108,7 +108,7 @@ See the [Quickstart Guide](./docs/quickstart.md) for detailed setup instructions
 
 - **6 Built-in Worker Profiles** - Vision, Docs, Coder, Architect, Explorer, Memory
 - **Hub-and-Spoke Architecture** - Central orchestrator with specialized workers
-- **8 Essential Tool APIs** - Focused tooling for worker management and delegation
+- **5-tool Async Task API** - Start/await/peek/list/cancel tasks (workers + workflows)
 - **Profile-Based Spawning** - Auto-model resolution from OpenCode config
 - **Dynamic Port Allocation** - Avoids conflicts with automatic port assignment
 - **Session-Based Isolation** - Each worker maintains its own conversation context
@@ -210,21 +210,16 @@ sequenceDiagram
     Orchestrator-->>User: "Bug fixed - added null check on line 42"
 ```
 
-**Spawn workers:**
+**Start tasks (async):**
 ```bash
-spawn_worker({ profileId: "vision" })
-spawn_worker({ profileId: "docs" })
+task_start({ kind: "worker", workerId: "vision", task: "What's in this image?", attachments: [...] })
+task_await({ taskId: "<taskId>" })
 ```
 
-**Delegate tasks:**
+**Auto-route tasks:**
 ```bash
-delegate_task({ task: "Analyze this screenshot", requiresVision: true })
-delegate_task({ task: "Find the official React hooks documentation" })
-```
-
-**Direct messaging:**
-```bash
-ask_worker({ workerId: "vision", message: "What's in this image?", attachments: [...] })
+task_start({ kind: "auto", task: "Find the official React hooks documentation" })
+task_await({ taskId: "<taskId>" })
 ```
 
 ## Workflows
@@ -286,6 +281,11 @@ stateDiagram-v2
 
 | Tool | Description |
 |------|-------------|
+| `task_start` | Start a worker/workflow task (async; returns `taskId`) |
+| `task_await` | Wait for a task to finish (returns final job record) |
+| `task_peek` | Inspect task status without waiting |
+| `task_list` | List recent tasks |
+| `task_cancel` | Cancel a running task (best-effort) |
 | `spawn_worker` | Start a worker with a profile |
 | `ask_worker` | Send a message to a specific worker |
 | `delegate_task` | Auto-route task to the best worker |
@@ -305,7 +305,7 @@ stateDiagram-v2
 | `orchestrator.models` | List available models |
 | `orchestrator.profiles` | List worker profiles |
 | `orchestrator.workers` | List running workers |
-| `orchestrator.spawn.<id>` | Spawn a worker (e.g. spawn.docs) |
+| `orchestrator.output` | Show recent tasks + logs |
 | `orchestrator.workflows` | List workflows |
 | `orchestrator.boomerang` | Run the RooCode boomerang workflow |
 

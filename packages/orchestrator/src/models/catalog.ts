@@ -308,8 +308,30 @@ export async function fetchOpencodeConfig(client: any, directory: string): Promi
 }
 
 export async function fetchProviders(client: any, directory: string): Promise<{ providers: Provider[]; defaults: Record<string, string> }> {
-  const res = await client.config.providers({ query: { directory } });
-  return { providers: (res.data as any)?.providers ?? [], defaults: (res.data as any)?.default ?? {} };
+  // Use provider.list() to get ALL providers including API catalog (zhipuai-coding-plan, etc.)
+  // Fall back to config.providers() if provider.list() is unavailable
+  const [providerListRes, configProvidersRes] = await Promise.all([
+    client.provider?.list?.({ query: { directory } }).catch(() => undefined),
+    client.config.providers({ query: { directory } }).catch(() => undefined),
+  ]);
+
+  // Merge providers from both sources, preferring provider.list() which has the full catalog
+  const providerListProviders = (providerListRes?.data as any)?.providers ?? [];
+  const configProviders = (configProvidersRes?.data as any)?.providers ?? [];
+
+  // Create a map to deduplicate by provider ID
+  const providerMap = new Map<string, Provider>();
+  for (const p of configProviders) {
+    if (p?.id) providerMap.set(p.id, p);
+  }
+  for (const p of providerListProviders) {
+    if (p?.id) providerMap.set(p.id, p);
+  }
+
+  return {
+    providers: Array.from(providerMap.values()),
+    defaults: (configProvidersRes?.data as any)?.default ?? {},
+  };
 }
 
 export async function fetchModelInfo(

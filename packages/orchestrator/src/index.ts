@@ -39,6 +39,7 @@ import {
 } from "./skills/events";
 import { getWorkflowContextForSession } from "./skills/context";
 import { publishOrchestratorEvent } from "./core/orchestrator-events";
+import { workerJobs } from "./core/jobs";
 
 export const OrchestratorPlugin: Plugin = async (ctx) => {
   // CRITICAL: Prevent recursive spawning - if this is a worker process, skip orchestrator initialization
@@ -118,6 +119,28 @@ export const OrchestratorPlugin: Plugin = async (ctx) => {
       trackSpawn(id, "error", { error: instance.error });
     }
   };
+
+  const extractPendingVisionTaskId = (parts: any[]): string | undefined => {
+    if (!Array.isArray(parts)) return undefined;
+    for (const part of parts) {
+      if (part?.type !== "text" || typeof part.text !== "string") continue;
+      if (!part.text.includes("[VISION ANALYSIS PENDING]")) continue;
+      const match = part.text.match(/task_await\(\{\s*taskId:\s*"([^"]+)"/);
+      if (match?.[1]) return match[1];
+    }
+    return undefined;
+  };
+
+  const hasVisionAnalysis = (parts: any[]): boolean => {
+    if (!Array.isArray(parts)) return false;
+    return parts.some(
+      (part) =>
+        part?.type === "text" &&
+        typeof part.text === "string" &&
+        (part.text.includes("[VISION ANALYSIS]") || part.text.includes("[VISION ANALYSIS FAILED]"))
+    );
+  };
+
   const onWorkerRemove = (instance: WorkerInstance) => {
     lastStatus.delete(instance.profile.id);
   };
@@ -320,11 +343,19 @@ export const OrchestratorPlugin: Plugin = async (ctx) => {
         const prior = (existing[name] ?? {}) as Record<string, unknown>;
         const priorTools = (prior as any)?.tools;
         const priorPermission = (prior as any)?.permission;
+        const defaultTaskTools = new Set(["task_start", "task_await", "task_peek", "task_list", "task_cancel"]);
+        const pluginToolOverrides = Object.fromEntries(
+          Object.keys(coreOrchestratorTools).map((id) => [id, defaultTaskTools.has(id)])
+        );
         const agentTools = config.agent?.tools ?? {
+          // Keep the orchestrator focused on delegation (workers do the actual work).
           bash: false,
           edit: false,
           skill: false,
           webfetch: false,
+
+          // Boil orchestrator plugin tools down to the async Task API by default.
+          ...pluginToolOverrides,
         };
         const agentPermission = config.agent?.permission ?? (priorPermission && typeof priorPermission === "object" ? priorPermission : undefined);
         opencodeConfig.agent = {
@@ -363,66 +394,44 @@ export const OrchestratorPlugin: Plugin = async (ctx) => {
         const baseCommands: Record<string, any> = {
           [`${prefix}status`]: {
             description: "Show orchestrator status (workers, profiles, config)",
-            template: "Call orchestrator_status({ format: 'markdown' }).",
+            template: "Call task_list({ view: 'status', format: 'markdown' }).",
           },
           [`${prefix}dashboard`]: {
             description: "Show a compact worker dashboard (status + warnings)",
-            template: "Call orchestrator_dashboard({ format: 'markdown' }).",
+            template: "Call task_list({ view: 'status', format: 'markdown' }).",
           },
           [`${prefix}output`]: {
             description: "Show unified orchestrator output (jobs + logs)",
-            template: "Call orchestrator_output({ format: 'markdown' }).",
+            template: "Call task_list({ view: 'output', format: 'markdown' }).",
           },
           [`${prefix}models`]: {
             description: "List available models from your OpenCode config",
-            template: "Call list_models({ format: 'markdown' }).",
+            template: "Call task_list({ view: 'models', format: 'markdown' }).",
           },
           [`${prefix}profiles`]: {
             description: "List available worker profiles",
-            template: "Call list_profiles({ format: 'markdown' }).",
+            template: "Call task_list({ view: 'profiles', format: 'markdown' }).",
           },
           [`${prefix}workers`]: {
             description: "List running workers",
-            template: "Call list_workers({ format: 'markdown' }).",
+            template: "Call task_list({ view: 'workers', format: 'markdown' }).",
           },
         };
 
         if (config.workflows?.enabled !== false) {
           baseCommands[`${prefix}workflows`] = {
             description: "List available workflows",
-            template: "Call list_workflows({ format: 'markdown' }).",
+            template: "Call task_list({ view: 'workflows', format: 'markdown' }).",
           };
           baseCommands[`${prefix}boomerang`] = {
             description: "Run the RooCode boomerang workflow (plan, implement, review, fix)",
-            template: "Call run_workflow({ workflowId: 'roocode-boomerang', task: '<task>' }).",
+            template:
+              "Call task_start({ kind: 'workflow', workflowId: 'roocode-boomerang', task: '<task>' }) and then task_await({ taskId: '<returned taskId>' }).",
           };
-        }
-
-        const profileCommands: Record<string, any> = {};
-        for (const profile of Object.values(config.profiles)) {
-          const isInProcess =
-            profile.kind === "agent" ||
-            profile.kind === "subagent" ||
-            (!profile.kind && profile.backend === "agent");
-          profileCommands[`${prefix}spawn.${profile.id}`] = {
-            description: `Spawn worker: ${profile.name} (${profile.id})`,
-            template: `Call spawn_worker({ profileId: '${profile.id}' }).`,
-          };
-          profileCommands[`${prefix}trace.${profile.id}`] = {
-            description: `Show recent trace for worker: ${profile.name} (${profile.id})`,
-            template: `Call worker_trace({ workerId: '${profile.id}' }).`,
-          };
-          if (isInProcess) {
-            profileCommands[`${prefix}open.${profile.id}`] = {
-              description: `Open sessions list for worker: ${profile.name} (${profile.id})`,
-              template: `Call open_worker_session({ workerId: '${profile.id}' }).`,
-            };
-          }
         }
 
         opencodeConfig.command = {
           ...baseCommands,
-          ...profileCommands,
           ...existing,
         } as any;
       }
@@ -475,6 +484,30 @@ export const OrchestratorPlugin: Plugin = async (ctx) => {
       }
 
       await workflowTriggers.handleVisionMessage(input, output);
+      const agentId = typeof (input as any)?.agent === "string" ? String((input as any).agent) : undefined;
+      const pendingTaskId = extractPendingVisionTaskId((output as any)?.parts);
+      if (pendingTaskId && agentId === orchestratorAgentName && !hasVisionAnalysis((output as any)?.parts)) {
+        try {
+          const job = await workerJobs.await(pendingTaskId, { timeoutMs: visionTimeoutMs });
+          const analysisText =
+            job?.responseText ??
+            (job?.error ? `[VISION ANALYSIS FAILED]\n${job.error}` : undefined);
+          if (analysisText) {
+            const parts = Array.isArray((output as any)?.parts) ? (output as any).parts : [];
+            parts.push({
+              type: "text",
+              text: analysisText,
+              synthetic: true,
+              sessionID: (input as any)?.sessionID ?? "",
+              messageID: (input as any)?.messageID ?? "",
+              id: `${(input as any)?.messageID ?? "msg"}-vision-analysis`,
+            });
+            (output as any).parts = parts;
+          }
+        } catch {
+          // Keep placeholder; the orchestrator can still await manually if needed.
+        }
+      }
       await workflowTriggers.handleMemoryTurnEnd(input, output);
     },
     event: async ({ event }) => {

@@ -2,24 +2,24 @@
 
 This guide shows practical examples of using Open Orchestra for common development tasks.
 
+Note: Examples prefer the async Task API (`task_start` → `task_await`) so orchestrator prompts stay consistent and models don’t “forget to await” background work.
+
 ## Example 1: Screenshot Bug Debugging
 
 **Scenario:** You have a screenshot of an error and need to fix it.
 
-### Step 1: Spawn the Vision Worker
+### Step 1: Analyze the Screenshot (Task API)
 
 ```
-spawn_worker({ profileId: "vision" })
-```
-
-### Step 2: Analyze the Screenshot
-
-```
-ask_worker({ 
-  workerId: "vision", 
-  message: "Analyze this error screenshot. What's the error message and what file/line is it pointing to?",
+task_start({
+  kind: "worker",
+  workerId: "vision",
+  task: "Analyze this error screenshot. What's the error message and what file/line is it pointing to?",
   attachments: [{ type: "image", path: "./error-screenshot.png" }]
 })
+# Returns: { taskId: "...", next: "task_await" }
+
+task_await({ taskId: "<taskId>" })
 ```
 
 **Example Response:**
@@ -37,29 +37,29 @@ Suggested fix: Add a guard clause or default value:
 - (users || []).map(...)
 ```
 
-### Step 3: Spawn the Coder Worker
+### Step 2: Fix the Bug (Task API)
 
 ```
-spawn_worker({ profileId: "coder" })
-```
-
-### Step 4: Fix the Bug
-
-```
-ask_worker({ 
-  workerId: "coder", 
-  message: "Fix the TypeError in src/components/UserList.jsx line 23. The 'users' variable is undefined on first render. Add a guard clause to prevent the error." 
+task_start({
+  kind: "worker",
+  workerId: "coder",
+  task: "Fix the TypeError in src/components/UserList.jsx line 23. The 'users' variable is undefined on first render. Add a guard clause to prevent the error."
 })
+
+task_await({ taskId: "<taskId>" })
 ```
 
-### One-Step Alternative: Use delegate_task
+### One-Step Alternative: Use the RooCode boomerang workflow
 
 ```
-delegate_task({ 
+task_start({
+  kind: "workflow",
+  workflowId: "roocode-boomerang",
   task: "This screenshot shows an error. Analyze it and fix the bug.",
-  requiresVision: true,
   attachments: [{ type: "image", path: "./error-screenshot.png" }]
 })
+
+task_await({ taskId: "<taskId>" })
 ```
 
 ---
@@ -71,12 +71,13 @@ delegate_task({
 ### Step 1: Research the API
 
 ```
-spawn_worker({ profileId: "docs" })
-
-ask_worker({ 
-  workerId: "docs", 
-  message: "I need to implement file uploads in my Express.js app. Research the multer library - show me the basic setup and how to handle single and multiple file uploads."
+task_start({
+  kind: "worker",
+  workerId: "docs",
+  task: "I need to implement file uploads in my Express.js app. Research the multer library - show me the basic setup and how to handle single and multiple file uploads."
 })
+
+task_await({ taskId: "<taskId>" })
 ```
 
 **Example Response:**
@@ -111,12 +112,13 @@ app.post('/uploads', upload.array('files', 5), (req, res) => {
 ### Step 2: Plan the Implementation
 
 ```
-spawn_worker({ profileId: "architect" })
-
-ask_worker({ 
-  workerId: "architect", 
-  message: "Based on this multer documentation, plan how to add file upload to our Express API. We need: single image upload for user avatars, validation for image types only, max 2MB size, and storage in an 'uploads/avatars' folder."
+task_start({
+  kind: "worker",
+  workerId: "architect",
+  task: "Based on this multer documentation, plan how to add file upload to our Express API. We need: single image upload for user avatars, validation for image types only, max 2MB size, and storage in an 'uploads/avatars' folder."
 })
+
+task_await({ taskId: "<taskId>" })
 ```
 
 **Example Response:**
@@ -156,12 +158,13 @@ ask_worker({
 ### Step 3: Implement the Code
 
 ```
-spawn_worker({ profileId: "coder" })
-
-ask_worker({ 
-  workerId: "coder", 
-  message: "Implement the file upload plan: 1) Create src/config/upload.js with multer config for avatar uploads (images only, 2MB max, uploads/avatars folder). 2) Add POST /users/:id/avatar route to src/routes/users.js. 3) Add uploads/ to .gitignore."
+task_start({
+  kind: "worker",
+  workerId: "coder",
+  task: "Implement the file upload plan: 1) Create src/config/upload.js with multer config for avatar uploads (images only, 2MB max, uploads/avatars folder). 2) Add POST /users/:id/avatar route to src/routes/users.js. 3) Add uploads/ to .gitignore."
 })
+
+task_await({ taskId: "<taskId>" })
 ```
 
 ---
@@ -173,10 +176,13 @@ ask_worker({
 ### Run the Workflow
 
 ```
-run_workflow({ 
-  workflowId: "roocode-boomerang", 
+task_start({
+  kind: "workflow",
+  workflowId: "roocode-boomerang",
   task: "Add input validation to the user registration endpoint. Required fields: email (valid format), password (min 8 chars, 1 number, 1 special char), username (3-20 chars, alphanumeric)."
 })
+
+task_await({ taskId: "<taskId>" })
 ```
 
 **What Happens:**
@@ -207,28 +213,36 @@ If you want more control, run each step manually:
 
 ```
 # Step 1: Plan
-ask_worker({ 
-  workerId: "architect", 
-  message: "Plan input validation for user registration: email, password (8+ chars, 1 number, 1 special), username (3-20 chars, alphanumeric)"
+task_start({
+  kind: "worker",
+  workerId: "architect",
+  task: "Plan input validation for user registration: email, password (8+ chars, 1 number, 1 special), username (3-20 chars, alphanumeric)"
 })
+task_await({ taskId: "<taskId>" })
 
 # Step 2: Implement
-ask_worker({ 
-  workerId: "coder", 
-  message: "[paste plan from architect]"
+task_start({
+  kind: "worker",
+  workerId: "coder",
+  task: "[paste plan from architect]"
 })
+task_await({ taskId: "<taskId>" })
 
 # Step 3: Review
-ask_worker({ 
-  workerId: "architect", 
-  message: "Review this validation implementation: [paste code]"
+task_start({
+  kind: "worker",
+  workerId: "architect",
+  task: "Review this validation implementation: [paste code]"
 })
+task_await({ taskId: "<taskId>" })
 
 # Step 4: Fix
-ask_worker({ 
-  workerId: "coder", 
-  message: "Address these review comments: [paste feedback]"
+task_start({
+  kind: "worker",
+  workerId: "coder",
+  task: "Address these review comments: [paste feedback]"
 })
+task_await({ taskId: "<taskId>" })
 ```
 
 ---
@@ -240,42 +254,39 @@ ask_worker({
 ### Using Async Workers
 
 ```
-# Spawn workers
-spawn_worker({ profileId: "docs" })
-
 # Start multiple async tasks
-ask_worker_async({ 
+task_start({ 
+  kind: "worker",
   workerId: "docs", 
-  message: "Research React Query v5 - key features and migration guide from v4" 
+  task: "Research React Query v5 - key features and migration guide from v4" 
 })
-# Returns: { jobId: "job-123" }
+# Returns: { taskId: "task-123", next: "task_await" }
 
-ask_worker_async({ 
+task_start({ 
+  kind: "worker",
   workerId: "docs", 
-  message: "Research Zustand state management - comparison with Redux" 
+  task: "Research Zustand state management - comparison with Redux" 
 })
-# Returns: { jobId: "job-456" }
+# Returns: { taskId: "task-456", next: "task_await" }
 
-ask_worker_async({ 
+task_start({ 
+  kind: "worker",
   workerId: "docs", 
-  message: "Research TanStack Router - features and Next.js comparison" 
+  task: "Research TanStack Router - features and Next.js comparison" 
 })
-# Returns: { jobId: "job-789" }
+# Returns: { taskId: "task-789", next: "task_await" }
 
-# Check job status
-list_worker_jobs
+# Check task status
+task_list({ view: "tasks", format: "markdown" })
 
-# Wait for specific job to complete
-await_worker_job({ jobId: "job-123" })
+# Wait for a specific task to complete
+task_await({ taskId: "task-123" })
 ```
 
 ### Spawning Multiple Workers
 
 ```
-# Spawn three docs workers with different focuses
-spawn_worker({ profileId: "docs" })  # Default docs worker
-
-# Create custom research workers
+# Create custom research workers (optionally auto-spawn them)
 # In .opencode/orchestrator.json:
 {
   "workers": [
@@ -296,12 +307,10 @@ spawn_worker({ profileId: "docs" })  # Default docs worker
   ]
 }
 
-# Now spawn and use them
-spawn_worker({ profileId: "frontend-docs" })
-spawn_worker({ profileId: "backend-docs" })
-
-ask_worker({ workerId: "frontend-docs", message: "Compare Vite vs Webpack for React apps" })
-ask_worker({ workerId: "backend-docs", message: "Compare Prisma vs Drizzle ORM" })
+# Now use them
+task_start({ kind: "worker", workerId: "frontend-docs", task: "Compare Vite vs Webpack for React apps" })
+task_start({ kind: "worker", workerId: "backend-docs", task: "Compare Prisma vs Drizzle ORM" })
+task_await({ taskIds: ["<taskId-frontend>", "<taskId-backend>"] })
 ```
 
 ---
@@ -335,12 +344,13 @@ Add to `.opencode/orchestrator.json`:
 ### Step 2: Use the Custom Worker
 
 ```javascript
-spawn_worker({ profileId: "ethers-expert" })
-
-ask_worker({ 
-  workerId: "ethers-expert", 
-  message: "Write a function to connect to Ethereum mainnet via Infura, read the balance of an address, and format it as ETH with 4 decimal places."
+task_start({
+  kind: "worker",
+  workerId: "ethers-expert",
+  task: "Write a function to connect to Ethereum mainnet via Infura, read the balance of an address, and format it as ETH with 4 decimal places."
 })
+
+task_await({ taskId: "<taskId>" })
 ```
 
 **Example Response:**
@@ -376,41 +386,49 @@ console.log(`Balance: ${balance} ETH`);
 ### Using the Explorer Worker
 
 ```
-spawn_worker({ profileId: "explorer" })
-
 # Find all API endpoints
-ask_worker({ 
-  workerId: "explorer", 
-  message: "Find all Express route definitions in this codebase. List each endpoint with its HTTP method and file location."
+task_start({
+  kind: "worker",
+  workerId: "explorer",
+  task: "Find all Express route definitions in this codebase. List each endpoint with its HTTP method and file location."
 })
+task_await({ taskId: "<taskId>" })
 
 # Find where a function is used
-ask_worker({ 
-  workerId: "explorer", 
-  message: "Find all usages of the 'validateUser' function. Show the file, line number, and context."
+task_start({
+  kind: "worker",
+  workerId: "explorer",
+  task: "Find all usages of the 'validateUser' function. Show the file, line number, and context."
 })
+task_await({ taskId: "<taskId>" })
 
 # Understand a pattern
-ask_worker({ 
-  workerId: "explorer", 
-  message: "How is authentication implemented in this codebase? Find the auth middleware and show how it's used."
+task_start({
+  kind: "worker",
+  workerId: "explorer",
+  task: "How is authentication implemented in this codebase? Find the auth middleware and show how it's used."
 })
+task_await({ taskId: "<taskId>" })
 ```
 
 ### Combining Explorer with Architect
 
 ```
 # First, explore
-ask_worker({ 
-  workerId: "explorer", 
-  message: "List all database models/schemas in this project"
+task_start({
+  kind: "worker",
+  workerId: "explorer",
+  task: "List all database models/schemas in this project"
 })
+task_await({ taskId: "<taskId>" })
 
 # Then, analyze
-ask_worker({ 
-  workerId: "architect", 
-  message: "Based on these database models, create an entity relationship diagram and explain the data flow."
+task_start({
+  kind: "worker",
+  workerId: "architect",
+  task: "Based on these database models, create an entity relationship diagram and explain the data flow."
 })
+task_await({ taskId: "<taskId>" })
 ```
 
 ---
@@ -477,10 +495,12 @@ memory_recent({
 memory_search({ query: "error handling conventions" })
 
 # Then ask coder with that context
-ask_worker({ 
+task_start({
+  kind: "worker",
   workerId: "coder",
-  message: "Add error handling to the createUser function. Remember to follow our error handling conventions: [paste memory result]"
+  task: "Add error handling to the createUser function. Remember to follow our error handling conventions: [paste memory result]"
 })
+task_await({ taskId: "<taskId>" })
 ```
 
 ---
@@ -490,43 +510,49 @@ ask_worker({
 ### Pattern: Research Then Implement
 
 ```
-ask_worker({ workerId: "docs", message: "Research [topic]" })
-ask_worker({ workerId: "architect", message: "Plan implementation based on: [research]" })
-ask_worker({ workerId: "coder", message: "Implement: [plan]" })
+task_start({ kind: "worker", workerId: "docs", task: "Research [topic]" })
+task_await({ taskId: "<taskId>" })
+task_start({ kind: "worker", workerId: "architect", task: "Plan implementation based on: [research]" })
+task_await({ taskId: "<taskId>" })
+task_start({ kind: "worker", workerId: "coder", task: "Implement: [plan]" })
+task_await({ taskId: "<taskId>" })
 ```
 
 ### Pattern: Vision-Assisted Debugging
 
 ```
-delegate_task({ 
-  task: "Analyze this error and fix it",
-  requiresVision: true,
-  attachments: [{ type: "image", path: "./screenshot.png" }]
-})
+task_start({ kind: "workflow", workflowId: "roocode-boomerang", task: "Analyze this error and fix it", attachments: [{ type: "image", path: "./screenshot.png" }] })
+task_await({ taskId: "<taskId>" })
 ```
 
 ### Pattern: Multi-File Changes
 
 ```
-ask_worker({ 
-  workerId: "architect", 
-  message: "List all files that need to change for [feature]"
+task_start({
+  kind: "worker",
+  workerId: "architect",
+  task: "List all files that need to change for [feature]"
 })
+task_await({ taskId: "<taskId>" })
 # Returns file list
 
-ask_worker({ 
-  workerId: "coder", 
-  message: "Make these changes: [list each file and change]"
+task_start({
+  kind: "worker",
+  workerId: "coder",
+  task: "Make these changes: [list each file and change]"
 })
+task_await({ taskId: "<taskId>" })
 ```
 
 ### Pattern: Code Review
 
 ```
-ask_worker({ 
-  workerId: "architect", 
-  message: "Review this code for: security issues, performance problems, code style, and potential bugs:\n\n[paste code]"
+task_start({
+  kind: "worker",
+  workerId: "architect",
+  task: "Review this code for: security issues, performance problems, code style, and potential bugs:\n\n[paste code]"
 })
+task_await({ taskId: "<taskId>" })
 ```
 
 ---

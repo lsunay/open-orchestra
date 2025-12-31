@@ -4,7 +4,15 @@ This is a compact index of the orchestrator tools. Core tools are injected by de
 
 ## Core tools (default)
 
-Worker lifecycle and routing:
+Task API (recommended):
+
+- `task_start` - Start a worker/workflow task (async; returns `taskId`)
+- `task_await` - Wait for a task to finish (returns final job record)
+- `task_peek` - Inspect task status without waiting
+- `task_list` - List recent tasks
+- `task_cancel` - Cancel a running task (best-effort)
+
+Legacy worker lifecycle and routing:
 
 - `spawn_worker` - Start a worker for a profile
 - `stop_worker` - Stop a running worker

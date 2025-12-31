@@ -6,24 +6,19 @@ import { extractImages, formatVisionAnalysis, hasImages, replaceImagesWithAnalys
 import { getWorkflow } from "./engine";
 import { resolveWorkflowLimits, runWorkflowWithContext } from "./runner";
 import type { WorkflowRunResult } from "./types";
-import type { WorkflowUiPolicy } from "../types";
-import { injectSessionNotice } from "../ux/wakeup";
 
 type ToastFn = (message: string, variant: "success" | "info" | "warning" | "error") => Promise<void>;
 type WorkflowTriggerOptions = {
   visionTimeoutMs: number;
   processedMessageIds?: Set<string>;
   showToast?: ToastFn;
-  runWorkflow?: (
-    input: {
-      workflowId: string;
-      task: string;
-      attachments?: any[];
-      autoSpawn?: boolean;
-      limits?: ReturnType<typeof resolveWorkflowLimits>;
-    },
-    options?: { sessionId?: string; uiPolicy?: WorkflowUiPolicy; notify?: boolean }
-  ) => Promise<WorkflowRunResult>;
+  runWorkflow?: (input: {
+    workflowId: string;
+    task: string;
+    attachments?: any[];
+    autoSpawn?: boolean;
+    limits?: ReturnType<typeof resolveWorkflowLimits>;
+  }, options?: { sessionId?: string }) => Promise<WorkflowRunResult>;
 };
 
 type TriggerConfig = {
@@ -117,16 +112,16 @@ function buildVisionPlaceholder(
 ): string {
   // Simple, clean markdown format that renders well in terminals
   return [
-    `**[VISION ANALYSIS]**`,
+    `**[VISION ANALYSIS PENDING]**`,
     ``,
     `> **Worker:** ${workerName}`,
     `> **Model:** ${workerModel}`,
-    `> **Job ID:** \`${jobId}\``,
+    `> **Task ID:** \`${jobId}\``,
     ``,
     `Status: analyzing image content...`,
     ``,
     `\`\`\``,
-    `await_worker_job({ jobId: "${jobId}" })`,
+    `task_await({ taskId: "${jobId}" })`,
     `\`\`\``,
   ].join("\n");
 }
@@ -135,22 +130,61 @@ function buildVisionWakeup(
   _workerId: string,
   jobId: string,
   success: boolean,
-  summary: string
+  summary: string,
+  analysisText?: string
 ): string {
-  const header = success ? "**[VISION ANALYSIS COMPLETE]**" : "**[VISION ANALYSIS FAILED]**";
+  const header = success ? "**[VISION ANALYSIS READY]**" : "**[VISION ANALYSIS FAILED]**";
+  const statusLine = success ? "Vision analysis ready" : `Vision analysis failed: ${summary}`;
+  const bodyText = success ? analysisText : undefined;
 
   return [
     header,
     ``,
-    `> ${summary}`,
-    `> **Job ID:** \`${jobId}\``,
-    ``,
-    `\`\`\``,
-    `await_worker_job({ jobId: "${jobId}" })`,
-    `\`\`\``,
+    `> ${statusLine}`,
+    `> **Task ID:** \`${jobId}\``,
+    ...(bodyText
+      ? [``, bodyText]
+      : [
+          ``,
+          `\`\`\``,
+          `task_await({ taskId: "${jobId}" })`,
+          `\`\`\``,
+        ]),
   ].join("\n");
 }
 
+async function injectOrchestratorNotice(
+  context: OrchestratorContext,
+  sessionId: string,
+  text: string
+): Promise<void> {
+  if (!context.client?.session) return;
+  try {
+    await context.client.session.prompt({
+      path: { id: sessionId },
+      body: { noReply: true, parts: [{ type: "text", text }] as any },
+      query: { directory: context.directory },
+    } as any);
+  } catch {
+    // Ignore injection failures (session may have ended, etc.)
+  }
+}
+
+// Patterns that indicate the model returned an error message as text (not a real analysis)
+const VISION_ERROR_PATTERNS = [
+  /does not support image input/i,
+  /cannot (read|process|analyze) .*image/i,
+  /model does not support .*attachment/i,
+  /unsupported.*image/i,
+  /image.*not supported/i,
+  /unable to (view|see|process) the image/i,
+  /i (can't|cannot) see the image/i,
+];
+
+function isVisionErrorResponse(text: string): boolean {
+  if (!text) return false;
+  return VISION_ERROR_PATTERNS.some((pattern) => pattern.test(text));
+}
 
 function pickWorkflowResponse(result: WorkflowRunResult): { success: boolean; response?: string; error?: string } {
   const errorStep = result.steps.find((step) => step.status === "error");
@@ -161,6 +195,16 @@ function pickWorkflowResponse(result: WorkflowRunResult): { success: boolean; re
   if (!responseStep) {
     return { success: false, error: "workflow produced no response" };
   }
+
+  // Check if the model returned an error message as regular text output
+  // This happens when the model can't process images and returns an error description instead
+  const responseText = responseStep.response ?? "";
+  if (isVisionErrorResponse(responseText)) {
+    // Extract a clean error message from the response
+    const cleanError = responseText.replace(/^ERROR:\s*/i, "").split("\n")[0].trim();
+    return { success: false, error: cleanError || "Model cannot process images" };
+  }
+
   return { success: true, response: responseStep.response };
 }
 
@@ -224,6 +268,7 @@ export function createWorkflowTriggers(context: OrchestratorContext, options: Wo
       sessionID: sessionId,
       messageID: messageId,
     });
+    void injectOrchestratorNotice(context, sessionId, placeholder);
 
     const run = async () => {
       try {
@@ -234,7 +279,7 @@ export function createWorkflowTriggers(context: OrchestratorContext, options: Wo
 
           // Inject wakeup message on error
           const wakeupMessage = buildVisionWakeup(workerId, job.id, false, error);
-          void injectSessionNotice(context, sessionId, wakeupMessage);
+          void injectOrchestratorNotice(context, sessionId, wakeupMessage);
           await showToast(`Vision analysis failed: ${error}`, "warning");
           return;
         }
@@ -250,11 +295,7 @@ export function createWorkflowTriggers(context: OrchestratorContext, options: Wo
             autoSpawn: trigger.autoSpawn,
             limits: { ...limits, perStepTimeoutMs },
           },
-          {
-            sessionId,
-            uiPolicy: { execution: "auto", intervene: "never" },
-            notify: false,
-          }
+          { sessionId }
         );
 
         const picked = pickWorkflowResponse(result);
@@ -273,8 +314,8 @@ export function createWorkflowTriggers(context: OrchestratorContext, options: Wo
 
         // Inject wakeup message when analysis completes (v0.2.3 behavior)
         const summary = picked.success ? "Vision analysis complete" : (picked.error ?? "Vision analysis failed");
-        const wakeupMessage = buildVisionWakeup(workerId, job.id, picked.success, summary);
-        void injectSessionNotice(context, sessionId, wakeupMessage);
+        const wakeupMessage = buildVisionWakeup(workerId, job.id, picked.success, summary, analysisText);
+        void injectOrchestratorNotice(context, sessionId, wakeupMessage);
 
         if (!picked.success && picked.error) {
           await showToast(`Vision analysis failed: ${picked.error}`, "warning");
@@ -285,7 +326,7 @@ export function createWorkflowTriggers(context: OrchestratorContext, options: Wo
 
         // Inject wakeup message on crash
         const wakeupMessage = buildVisionWakeup(workerId, job.id, false, msg);
-        void injectSessionNotice(context, sessionId, wakeupMessage);
+        void injectOrchestratorNotice(context, sessionId, wakeupMessage);
         await showToast(`Vision analysis crashed: ${msg}`, "error");
       }
     };
@@ -355,11 +396,7 @@ export function createWorkflowTriggers(context: OrchestratorContext, options: Wo
             autoSpawn: trigger.autoSpawn,
             limits,
           },
-          {
-            sessionId,
-            uiPolicy: { execution: "auto", intervene: "never" },
-            notify: false,
-          }
+          { sessionId }
         );
 
         const picked = pickWorkflowResponse(result);

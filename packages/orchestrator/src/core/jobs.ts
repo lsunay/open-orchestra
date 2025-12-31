@@ -82,6 +82,17 @@ export class WorkerJobRegistry {
     this.prune();
   }
 
+  cancel(id: string, input?: { reason?: string }): void {
+    const job = this.jobs.get(id);
+    if (!job || job.status !== "running") return;
+    job.status = "canceled";
+    if (input?.reason) job.error = input.reason;
+    job.finishedAt = Date.now();
+    job.durationMs = job.finishedAt - job.startedAt;
+    this.notify(id, job);
+    this.prune();
+  }
+
   attachReport(id: string, report: WorkerJobReport): void {
     const job = this.jobs.get(id);
     if (!job) return;

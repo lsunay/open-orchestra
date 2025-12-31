@@ -26,12 +26,17 @@ const hasVisionAnalysis = (text: string): boolean => text.includes("<pasted_imag
 
 /** Check if vision analysis is currently in progress (placeholder present). */
 const isVisionAnalyzing = (text: string): boolean =>
-  text.includes("[VISION ANALYSIS IN PROGRESS]") || text.includes('job="');
+  text.includes("[VISION ANALYSIS IN PROGRESS]") ||
+  text.includes("[VISION ANALYSIS PENDING]") ||
+  text.includes('job="') ||
+  text.includes("task_await({ taskId:");
 
 /** Extract the job ID from vision placeholder if present. */
 const extractVisionJobId = (text: string): string | undefined => {
   const match = text.match(/job="([^"]+)"/);
-  return match?.[1];
+  if (match?.[1]) return match[1];
+  const taskMatch = text.match(/task_await\(\{\s*taskId:\s*"([^"]+)"/);
+  return taskMatch?.[1];
 };
 
 export type MessageDisplay = {

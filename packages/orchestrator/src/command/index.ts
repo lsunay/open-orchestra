@@ -15,6 +15,7 @@ import { createUxTools } from "./ux";
 import { createDiagnosticsTools } from "./diagnostics";
 import { createWorkflowTools } from "./workflows";
 import { createSkillTools } from "./skills";
+import { createTaskTools } from "./tasks";
 
 export {
   setClient,
@@ -71,6 +72,7 @@ export {
 } from "./ux";
 export { orchestratorDiagnostics } from "./diagnostics";
 export { continueWorkflowTool, listWorkflowsTool, runWorkflowTool } from "./workflows";
+export { taskAwait, taskCancel, taskList, taskPeek, taskStart } from "./tasks";
 
 function buildToolSets(context: OrchestratorContext) {
   const workerTools = createWorkerTools(context);
@@ -81,8 +83,16 @@ function buildToolSets(context: OrchestratorContext) {
   const diagnosticsTools = createDiagnosticsTools(context);
   const workflowTools = createWorkflowTools(context);
   const skillTools = createSkillTools(context);
+  const taskTools = createTaskTools(context);
 
   const core: Record<string, ToolDefinition> = {
+    // Async Task API (recommended)
+    task_start: taskTools.taskStart,
+    task_await: taskTools.taskAwait,
+    task_peek: taskTools.taskPeek,
+    task_list: taskTools.taskList,
+    task_cancel: taskTools.taskCancel,
+
     // Core worker lifecycle + messaging
     spawn_worker: workerTools.spawnNewWorker,
     ask_worker: workerTools.askWorker,

@@ -55,11 +55,12 @@ export function buildPassthroughSystemPrompt(workerId: string): string {
     `You are in PASSTHROUGH mode.\n\n` +
     `Rules:\n` +
     `- If the incoming message contains "<orchestrator-internal", DO NOT passthrough. Handle it normally as the orchestrator.\n` +
-    `- Otherwise, for every new user message, call ask_worker({ workerId: "${workerId}", message: <the user message>, attachments: <forward if present> }).\n` +
-    `- Return ONLY the worker's answer.\n\n` +
+    `- Otherwise, for every new user message:\n` +
+    `  1) Call task_start({ kind: "worker", workerId: "${workerId}", task: <the user message>, attachments: <forward if present> })\n` +
+    `  2) Call task_await({ taskId: <returned taskId> })\n` +
+    `  3) Return ONLY the awaited job.responseText.\n\n` +
     `Exit:\n` +
     `- If the user says "exit passthrough", "exit docs mode", or "back", stop passthrough and respond normally.\n` +
     `</orchestrator-passthrough>`
   );
 }
-

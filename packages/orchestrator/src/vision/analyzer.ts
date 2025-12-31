@@ -321,12 +321,28 @@ export function formatVisionAnalysis(result: VisionResult): string | undefined {
 export function replaceImagesWithAnalysis(
   parts: any[],
   analysisText: string,
-  meta?: { sessionID?: string; messageID?: string }
+  meta?: { sessionID?: string; messageID?: string; position?: "append" | "prepend" }
 ): any[] {
   if (!Array.isArray(parts)) return parts;
 
   const withoutImages = parts.filter((p) => !isImagePart(p));
   if (withoutImages.length === parts.length) return parts; // No images to replace
+
+  const position = meta?.position ?? "append";
+
+  if (position === "prepend") {
+    return [
+      {
+        type: "text",
+        text: `${analysisText}\n`,
+        id: `${meta?.messageID ?? "msg"}-vision-analysis`,
+        sessionID: meta?.sessionID ?? "",
+        messageID: meta?.messageID ?? "",
+        synthetic: true,
+      },
+      ...withoutImages,
+    ];
+  }
 
   // Try to append to last text part
   for (let i = withoutImages.length - 1; i >= 0; i--) {

@@ -173,7 +173,6 @@ async function _spawnWorkerCore(
     }
 
     instance.sessionId = session.id;
-    workerPool.trackOwnership(session.id, resolvedProfile.id);
 
     if (typeof instance.pid === "number") {
       await registerWorkerInDeviceRegistry({

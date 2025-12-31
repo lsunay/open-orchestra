@@ -217,6 +217,7 @@ export async function startBridgeServer(): Promise<BridgeServer> {
 
   const addr = server.address();
   if (!addr || typeof addr === "string") throw new Error("Failed to bind bridge server");
+
   const url = `http://127.0.0.1:${addr.port}`;
 
   return {

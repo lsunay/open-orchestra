@@ -606,8 +606,8 @@ export class WorkerPool {
     }
 
     lines.push("## How to Use Workers");
-    lines.push("Use the `ask_worker` tool to send messages to any worker by their ID.");
-    lines.push("Example: ask_worker({ workerId: 'vision', message: 'Describe this image', attachments: [...] })");
+    lines.push("Use `task_start` to delegate work, then `task_await` to get results.");
+    lines.push("Example: task_start({ kind: 'worker', workerId: 'docs', task: 'Find docs for X' })");
     lines.push("");
 
     return lines.join("\n");

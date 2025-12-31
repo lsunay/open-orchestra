@@ -38,7 +38,7 @@ export const WorkerMessage: Component<WorkerMessageProps> = (props) => {
       // Remove the placeholder XML tags and their content for cleaner display
       const cleaned = text
         .replace(/<pasted_image[^>]*>[\s\S]*?<\/pasted_image>/g, "")
-        .replace(/\[VISION ANALYSIS IN PROGRESS\][\s\S]*?Job ID:.*$/gm, "")
+        .replace(/\*{0,2}\[VISION ANALYSIS (?:PENDING|IN PROGRESS)\]\*{0,2}[\s\S]*$/gm, "")
         .trim();
       return cleaned || (files.length > 0 ? "" : "");
     }
