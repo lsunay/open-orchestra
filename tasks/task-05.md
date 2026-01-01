@@ -76,8 +76,8 @@ git push origin main
 
 ## Completion record (fill in when done)
 
-- Commit: `<sha>`
+- Commit: `HEAD`
 - After references (update with final line numbers):
-  - `packages/orchestrator/src/models/resolve.ts:<line>`
-  - `packages/orchestrator/src/models/hydrate.ts:<line>`
-  - `packages/orchestrator/test/unit/<new test file>:<line>`
+  - `packages/orchestrator/src/models/resolve.ts:41`
+  - `packages/orchestrator/src/models/hydrate.ts:42`
+  - `packages/orchestrator/test/unit/models-resolve-worker.test.ts:1`

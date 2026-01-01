@@ -3,14 +3,9 @@ import {
   fetchModelInfo,
   fetchOpencodeConfig,
   fetchProviders,
-  filterProviders,
-  flattenProviders,
   parseFullModelID,
-  pickDocsModel,
-  pickFastModel,
-  pickVisionModel,
-  resolveModelRef,
 } from "./catalog";
+import { resolveFallbackModel, resolveWorkerModel } from "./resolve";
 
 export type ProfileModelHydrationChange = {
   profileId: string;
@@ -34,88 +29,24 @@ export async function hydrateProfileModelsFromOpencode(input: {
   ]);
 
   const providersAll = providersRes.providers;
-  // For auto-selection (node:vision, node:fast, etc.), prefer configured providers.
-  // But allow ALL providers for explicit model references since the user chose them.
-  const providersUsable = filterProviders(providersAll, "configured");
-  const catalog = flattenProviders(providersUsable);
-
-  // Collect provider IDs explicitly referenced in profile models (user intent = use them)
-  const explicitlyReferencedProviders = new Set<string>();
-  for (const profile of Object.values(input.profiles)) {
-    const model = profile.model.trim();
-    if (model.includes("/") && !model.startsWith("auto") && !model.startsWith("node")) {
-      const providerID = model.split("/")[0];
-      explicitlyReferencedProviders.add(providerID);
-    }
-  }
-
-  const fallbackCandidate =
-    cfg?.model ||
-    (providersRes.defaults?.opencode ? `opencode/${providersRes.defaults.opencode}` : undefined) ||
-    "opencode/gpt-5-nano";
-
-  const resolvedFallback = resolveModelRef(fallbackCandidate, providersAll);
-  const fallbackModel = "error" in resolvedFallback ? fallbackCandidate : resolvedFallback.full;
+  const fallbackModel = resolveFallbackModel({
+    config: cfg,
+    providers: providersAll,
+    providerDefaults: providersRes.defaults,
+  });
 
   const changes: ProfileModelHydrationChange[] = [];
 
-  const resolveAuto = (profile: WorkerProfile): { model: string; reason: string } => {
-    const tag = profile.model;
-    const isVision = profile.supportsVision || /(?:auto|node):vision/i.test(tag);
-    const isDocs = /(?:auto|node):docs/i.test(tag);
-    const isFast = /(?:auto|node):fast/i.test(tag);
-
-    if (isFast && cfg?.small_model) {
-      const resolvedSmall = resolveModelRef(cfg.small_model, providersAll);
-      if (!("error" in resolvedSmall)) {
-        return { model: resolvedSmall.full, reason: `auto-selected from small_model (${tag})` };
-      }
-    }
-
-    const picked = isVision
-      ? pickVisionModel(catalog)
-      : isDocs
-        ? pickDocsModel(catalog)
-        : isFast
-          ? pickFastModel(catalog)
-          : undefined;
-
-    if (picked) {
-      return { model: picked.full, reason: `auto-selected from configured models (${tag})` };
-    }
-
-    // Vision workers should never silently downgrade to a text-only model.
-    if (isVision) {
-      throw new Error(
-        `No vision-capable models found for "${profile.id}" (model tag: "${tag}"). ` +
-          `Configure a vision model in OpenCode or set the profile model explicitly.`
-      );
-    }
-
-    return { model: fallbackModel, reason: `fallback to default model (${tag})` };
-  };
-
   const next: Record<string, WorkerProfile> = {};
   for (const [id, profile] of Object.entries(input.profiles)) {
-    let desired = profile.model;
-    let reason = "";
-
-    const modelSpec = profile.model.trim();
-    const isNodeTag = modelSpec.startsWith("auto") || modelSpec.startsWith("node");
-
-    if (isNodeTag) {
-      const resolved = resolveAuto(profile);
-      desired = resolved.model;
-      reason = resolved.reason;
-    } else {
-      // User explicitly specified a model - trust their choice and use ALL providers
-      const resolved = resolveModelRef(profile.model, providersAll);
-      if ("error" in resolved) {
-        const suffix = resolved.suggestions?.length ? `\nSuggestions:\n- ${resolved.suggestions.join("\n- ")}` : "";
-        throw new Error(`Invalid model for profile "${profile.id}": ${resolved.error}${suffix}`);
-      }
-      desired = resolved.full;
-    }
+    const resolved = resolveWorkerModel({
+      profile,
+      config: cfg,
+      providers: providersAll,
+      providerDefaults: providersRes.defaults,
+    });
+    const desired = resolved.resolvedModel;
+    const reason = resolved.reason;
 
     if (profile.supportsVision) {
       const parsed = parseFullModelID(desired);
