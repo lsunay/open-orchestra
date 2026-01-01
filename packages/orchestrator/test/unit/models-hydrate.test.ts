@@ -37,6 +37,76 @@ const createClient = (input: {
 };
 
 describe("hydrateProfileModelsFromOpencode", () => {
+  test("prefers cfg.small_model for node:fast tags", async () => {
+    const configured = makeProvider({
+      id: "cfg",
+      source: "config",
+      models: {
+        "fast-small": { name: "fast-small", cost: { input: 5, output: 0, cache: { read: 0, write: 0 } } },
+        "fast-ultra": { name: "fast-ultra", limit: { context: 128000, output: 0 } },
+      },
+    });
+
+    const client = createClient({
+      config: { model: "cfg/fast-ultra", small_model: "cfg/fast-small" } as Config,
+      providersConfig: [configured],
+      providersList: [configured],
+    });
+
+    const profiles: Record<string, WorkerProfile> = {
+      fast: {
+        id: "fast",
+        name: "Fast",
+        model: "node:fast",
+        purpose: "Test",
+        whenToUse: "Test",
+      },
+    };
+
+    const result = await hydrateProfileModelsFromOpencode({
+      client,
+      directory: process.cwd(),
+      profiles,
+    });
+
+    expect(result.profiles.fast.model).toBe("cfg/fast-small");
+  });
+
+  test("falls back when cfg.small_model is invalid for node:fast tags", async () => {
+    const configured = makeProvider({
+      id: "cfg",
+      source: "config",
+      models: {
+        "fast-small": { name: "fast-small", cost: { input: 5, output: 0, cache: { read: 0, write: 0 } } },
+        "fast-ultra": { name: "fast-ultra", limit: { context: 128000, output: 0 } },
+      },
+    });
+
+    const client = createClient({
+      config: { model: "cfg/fast-ultra", small_model: "cfg/missing" } as Config,
+      providersConfig: [configured],
+      providersList: [configured],
+    });
+
+    const profiles: Record<string, WorkerProfile> = {
+      fast: {
+        id: "fast",
+        name: "Fast",
+        model: "node:fast",
+        purpose: "Test",
+        whenToUse: "Test",
+      },
+    };
+
+    const result = await hydrateProfileModelsFromOpencode({
+      client,
+      directory: process.cwd(),
+      profiles,
+    });
+
+    expect(result.profiles.fast.model).toBe("cfg/fast-ultra");
+  });
+
   test("includes api providers with key for node:fast tags", async () => {
     const api = makeProvider({
       id: "api",

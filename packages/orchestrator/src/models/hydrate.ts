@@ -65,6 +65,13 @@ export async function hydrateProfileModelsFromOpencode(input: {
     const isDocs = /(?:auto|node):docs/i.test(tag);
     const isFast = /(?:auto|node):fast/i.test(tag);
 
+    if (isFast && cfg?.small_model) {
+      const resolvedSmall = resolveModelRef(cfg.small_model, providersAll);
+      if (!("error" in resolvedSmall)) {
+        return { model: resolvedSmall.full, reason: `auto-selected from small_model (${tag})` };
+      }
+    }
+
     const picked = isVision
       ? pickVisionModel(catalog)
       : isDocs
