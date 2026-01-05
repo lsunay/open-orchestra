@@ -14,6 +14,7 @@ describe("skills discovery", () => {
 	let homeDir: string;
 
 	beforeAll(async () => {
+		await mkdir(join(process.cwd(), ".tmp"), { recursive: true });
 		tmpDir = await mkdtemp(join(process.cwd(), ".tmp", "skills-discovery-"));
 		projectDir = join(tmpDir, "repo");
 		nestedDir = join(projectDir, "src");
